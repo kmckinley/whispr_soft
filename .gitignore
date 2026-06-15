@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Build output
+build/
+DerivedData/
+.build/
+*.dSYM
+*.dSYM.zip
+*.moved-aside
+*.hmap
+
+# SwiftPM local caches (the SHARED Package.resolved stays tracked)
+.swiftpm/
