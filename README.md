@@ -32,6 +32,54 @@ focused. Transcription runs **on-device** — your audio never leaves the Mac.
   window. Settings (API key, Local Mode, tone profiles, corrections) live in the
   menu.
 
+## Screenshots
+
+The whole app lives in a single menu-bar popover with three tabs (Dictate, Tone,
+Corrections) plus a Settings screen behind the gear.
+
+### Dictate
+
+![The Dictate tab](screenshots/dictate.png)
+
+The home screen and live status display. The hero shows the current pipeline
+state — *Ready to dictate* at idle (with the **⌃⌥Space** hold-to-talk hint),
+an animated waveform while recording, and a spinner while transcribing or
+cleaning up. The card below is the quick-access control panel: **Tone profile**
+picks the active tone for cleanup (this is the only place the active tone is
+chosen), and **Engine** shows the current cleanup backend — Cloud · Claude or
+Local — and links to Settings.
+
+### Tone
+
+![The Tone tab](screenshots/tone.png)
+
+Manage your rewrite tone profiles. Each profile is a short instruction that
+nudges the wording of the cleaned-up text while preserving your own sentences,
+structure, and meaning. Tap a card to expand and edit its name and instruction,
+or delete it; use the up/down arrows to reorder. The profile marked **Active**
+is the one currently selected on the Dictate tab. This tab is management only —
+selecting the active tone happens back on Dictate.
+
+### Corrections
+
+![The Corrections tab](screenshots/corrections.png)
+
+A deterministic find-and-replace list applied *after* cleanup, just before the
+text is pasted — so neither Whisper's mishearing nor the cleanup model can
+reintroduce a wrong spelling. Useful for proper names Whisper consistently gets
+wrong (e.g. "chem soft" → "Kemsoft", "shit audio" → "Schiit Audio"). Matching is
+case-insensitive and whole-word; the replacement is inserted with exactly the
+casing you type. Add and remove rows inline.
+
+### Settings
+
+![The Settings screen](screenshots/settings.png)
+
+Behind the gear: the **Local mode** toggle (route cleanup to a local LM Studio
+instance instead of the cloud), the **Claude API key** add/remove flow (stored
+in the Keychain, shown here as Connected), the **Dictation shortcut** reference,
+Quit, and the app version.
+
 ## Privacy
 
 - **Audio is always transcribed locally and never leaves your Mac.**
