@@ -18,11 +18,19 @@ focused. Transcription runs **on-device** — your audio never leaves the Mac.
   - **Local Mode** — a local [LM Studio](https://lmstudio.ai) instance at
     `127.0.0.1:1234`. No key, nothing leaves the Mac.
   - With no key and Local Mode off, the raw transcript is pasted as-is.
+- **Tone profiles.** Pick a tone for the cleaned-up text from a user-editable
+  list of profiles (full create/edit/delete/reorder). Each profile is a short
+  instruction — e.g. "Professional" or "Casual" — that nudges the wording while
+  the cleanup keeps your own sentences, structure, and meaning. Selecting
+  **Default** leaves the cleanup unchanged. The active profile applies to both
+  Cloud and Local cleanup, and changes take effect on the next dictation. Manage
+  profiles on the **Tone** tab; choose the active one on the **Dictate** tab.
 - **Keyword corrections.** A deterministic, user-editable find-and-replace list
   (e.g. fix a name Whisper consistently mishears) is applied *after* cleanup, so
   neither Whisper nor the cleanup model can reintroduce the wrong spelling.
 - **Menu-bar agent.** Runs as a menu-bar item with no dock icon and no main
-  window. Settings (API key, Local Mode, corrections) live in the menu.
+  window. Settings (API key, Local Mode, tone profiles, corrections) live in the
+  menu.
 
 ## Privacy
 
@@ -50,18 +58,16 @@ focused. Transcription runs **on-device** — your audio never leaves the Mac.
    original author's team id, which won't sign on your machine. (The App Sandbox
    is intentionally off and Hardened Runtime is on — Accessibility and synthetic
    keystroke injection are unsupported under the sandbox.)
-3. Build and run. On first launch, grant the three required permissions (below).
+3. Build and run. On first launch, grant the two required permissions (below).
 
 ### Permissions
 
-WhisprSoft can't run until all three are granted; it shows an onboarding
+WhisprSoft can't run until both are granted; it shows an onboarding
 checklist until they are.
 
 - **Microphone** — to record your voice. Granted inline via the standard prompt.
 - **Accessibility** — to paste the transcribed text into the focused app
   (synthetic ⌘V). Granted in System Settings, then re-checked.
-- **Input Monitoring** — to detect the global ⌃⌥Space hotkey. Granting it may
-  require **relaunching the app** before the hotkey works.
 
 ### Optional: transcript cleanup
 
