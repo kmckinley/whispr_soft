@@ -25,6 +25,15 @@ focused. Transcription runs **on-device** — your audio never leaves the Mac.
   **Default** leaves the cleanup unchanged. The active profile applies to both
   Cloud and Local cleanup, and changes take effect on the next dictation. Manage
   profiles on the **Tone** tab; choose the active one on the **Dictate** tab.
+- **Target language.** Pick an output language from a fixed list of ~20 major
+  languages. When you choose a non-default language, the cleaned-up text is
+  translated into it before it's pasted — so you can speak English and paste
+  Spanish, French, Japanese, and so on. The default, **English (United States)**,
+  means no translation (the text stays in the language you spoke). Translation
+  rides on the same cleanup step, so it works in both Cloud and Local modes, and
+  the choice takes effect on the next dictation. Pick the language on the
+  **Dictate** tab. (Transcription itself is still English-tuned, so the reliable
+  path is *speak English → paste another language*.)
 - **Keyword corrections.** A deterministic, user-editable find-and-replace list
   (e.g. fix a name Whisper consistently mishears) is applied *after* cleanup, so
   neither Whisper nor the cleanup model can reintroduce the wrong spelling.
@@ -44,10 +53,12 @@ Corrections) plus a Settings screen behind the gear.
 The home screen and live status display. The hero shows the current pipeline
 state — *Ready to dictate* at idle (with the **⌃⌥Space** hold-to-talk hint),
 an animated waveform while recording, and a spinner while transcribing or
-cleaning up. The card below is the quick-access control panel: **Tone profile**
-picks the active tone for cleanup (this is the only place the active tone is
-chosen), and **Engine** shows the current cleanup backend — Cloud · Claude or
-Local — and links to Settings.
+cleaning up. The card below is the quick-access control panel: **Language** picks
+the output language — leave it on *English (United States)* for no translation,
+or choose another to have the cleaned-up text translated before it's pasted;
+**Tone profile** picks the active tone for cleanup (this is the only place the
+active tone is chosen); and **Engine** shows the current cleanup backend —
+Cloud · Claude or Local — and links to Settings.
 
 ### Tone
 
