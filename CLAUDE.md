@@ -47,7 +47,7 @@ abstraction.
     Injection/
       TextInjector.swift    // TextInjector + StubInjector + PasteboardInjector
     Permissions/
-      PermissionsManager.swift  // mic + Accessibility + Input Monitoring status
+      PermissionsManager.swift  // mic + Accessibility status
     Security/
       Keychain.swift        // Claude API key store (generic password)
     UI/
@@ -78,7 +78,7 @@ implementations in their respective passes — not on the Coordinator.
 
 ## Permissions
 
-Permissions modeled (all three currently gating the pipeline):
+Permissions modeled (both currently gating the pipeline):
 
 - **Microphone** — for audio capture. Granted inline via the TCC dialog.
   Under Hardened Runtime, requires `com.apple.security.device.audio-input`
@@ -86,19 +86,18 @@ Permissions modeled (all three currently gating the pipeline):
   target is build-setting-driven, no `.entitlements` file) plus the
   `NSMicrophoneUsageDescription` usage string
   (`INFOPLIST_KEY_NSMicrophoneUsageDescription`).
-- **Accessibility** — required to post the paste keystroke during
-  injection. Only grantable now that the App Sandbox is off (Apple does
-  not support the Accessibility APIs in sandboxed apps — with the sandbox
-  on, the app never appears in the System Settings list). Cannot be
-  granted inline; the user is prompted and sent to System Settings, then
-  re-checked. macOS exposes no "denied" state for it — only granted vs.
-  not-yet-enabled.
-- **Input Monitoring** — required for the CGEventTap that *listens* for the
-  ⌃⌥Space hotkey. Sandbox-compatible (`CGPreflightListenEventAccess` /
-  `CGRequestListenEventAccess`); like Accessibility it exposes no "denied"
-  state, only granted vs. not-yet-enabled, and granting it may require
-  relaunching the app before the tap can be created. Settings pane:
-  `Privacy_ListenEvent`.
+- **Accessibility** — required both to post the paste keystroke during
+  injection **and** to run the active `CGEventTap` that observes the
+  ⌃⌥Space hotkey (an active `.defaultTap` keystroke-observing tap is
+  authorized by Accessibility, not Input Monitoring — only `.listenOnly`
+  taps need the latter, so Input Monitoring is not modeled). Only grantable
+  now that the App Sandbox is off (Apple does not support the Accessibility
+  APIs in sandboxed apps — with the sandbox on, the app never appears in the
+  System Settings list). Cannot be granted inline; the gate shows a single
+  **Grant** button that calls `AXIsProcessTrustedWithOptions([prompt:
+  true])` — the system prompt itself offers to open Settings (we do **not**
+  separately open the pane). macOS exposes no "denied" state for it — only
+  granted vs. not-yet-enabled.
 
 Changing the entitlement set (as this pass does by dropping the sandbox)
 invalidates prior TCC grants, so all permissions must be re-granted after
@@ -253,9 +252,12 @@ fires on the engaging transition; `onChordUp` fires on keyUp **or** a
 modifier released mid-hold (`flagsChanged`), whichever comes first, while
 the trailing Space events keep getting swallowed. It re-enables itself on
 `.tapDisabledByTimeout`/`.tapDisabledByUserInput`.
-`start()` is idempotent (no-op if the tap exists) and, if Input Monitoring
-isn't granted, requests it and returns without a tap. Diagnostics via
-`Log.hotkey`.
+`start()` is idempotent (no-op if the tap exists). The tap is **active**
+(`.defaultTap`), so it's authorized by **Accessibility** — `start()` does
+**not** preflight or request Input Monitoring (`CGPreflightListenEventAccess`
+is gone); it calls `tapCreate` directly and bails on a nil return
+(Accessibility not yet granted), and the permission gate brings it back once
+granted. Diagnostics via `Log.hotkey`.
 
 ### Coordinator entry points
 
@@ -454,8 +456,10 @@ of wrapping.
 The popover is a **360pt dark, violet-accented, tabbed** panel (the "Kemsoft
 Voice Popover" design), all in `UI/MenuBarContent.swift`. A persistent header
 (app-icon logo via `NSApplication.shared.applicationIconImage` + "WhisprSoft" +
-a live status dot/text from `coordinator.state`, gear → Settings) sits above
-either the tabbed body or the Settings screen:
+a live **static** status dot/text from `coordinator.state` — the dot is a
+plain colored circle, no pulse animation (the old pulse rendered a square
+artifact mid-cycle) — gear → Settings) sits above either the tabbed body or
+the Settings screen:
 
 - **Dictate** — a hero *status display* (NOT a button) driven by
   `coordinator.state`: idle shows the app icon + ⌃⌥Space keycaps, recording the
@@ -485,8 +489,9 @@ scroll area needs a determinate height — see the `HeightKey` preference).
 `AccentColor.colorset` is set to the violet `#9A8BFF` so system controls tint
 to match. The permission hard-gate is a redesigned in-popover `permissionsGate`
 (in `MenuBarContent`, styled to match the panel, reusing `PermissionsManager`):
-a header, an accent-tinted blocking notice, three permission cards (status glyph
-+ why + Grant/Open-Settings actions), and a Re-check/Quit footer. Shown until
+a header, an accent-tinted blocking notice, two permission cards (Microphone +
+Accessibility; status glyph + why + Grant/Open-Settings actions — Accessibility
+is a single **Grant** button), and a Re-check/Quit footer. Shown until
 `allGranted`; the panel chrome (`.frame(width: 360)`, `popoverBackground`,
 `.preferredColorScheme(.dark)`) is hoisted to the outer container so the gate
 and granted body share it. There is **no** Permissions section in Settings —

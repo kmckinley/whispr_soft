@@ -10,7 +10,6 @@
 import AVFoundation
 import ApplicationServices
 import AppKit
-import CoreGraphics
 
 enum PermissionStatus {
     case notDetermined
@@ -23,25 +22,21 @@ enum PermissionStatus {
 final class PermissionsManager {
     private(set) var microphone: PermissionStatus = .notDetermined
     private(set) var accessibility: PermissionStatus = .notDetermined
-    private(set) var inputMonitoring: PermissionStatus = .notDetermined
 
     init() {
         refresh()
     }
 
     var allGranted: Bool {
-        microphone == .granted && accessibility == .granted && inputMonitoring == .granted
+        microphone == .granted && accessibility == .granted
     }
 
-    /// Re-query all three permissions and update status. Cheap; call on every
+    /// Re-query both permissions and update status. Cheap; call on every
     /// appearance of the gate so returning from System Settings reflects
     /// immediately.
     func refresh() {
         microphone = currentMicrophoneStatus()
         accessibility = AXIsProcessTrusted() ? .granted : .notDetermined
-        // Like Accessibility, the system exposes no "denied" state — only
-        // granted vs. not-yet-enabled.
-        inputMonitoring = CGPreflightListenEventAccess() ? .granted : .notDetermined
     }
 
     /// Triggers the inline mic TCC dialog when not yet determined;
@@ -53,19 +48,11 @@ final class PermissionsManager {
         microphone = granted ? .granted : currentMicrophoneStatus()
     }
 
-    /// Shows the system Accessibility prompt and opens the Accessibility
-    /// settings pane. Status updates on the next refresh().
+    /// Shows the system Accessibility prompt (which itself offers to open
+    /// System Settings). Status updates on the next refresh().
     func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
-        openAccessibilitySettings()
-    }
-
-    /// Shows the Input Monitoring prompt (first call registers the app) and
-    /// opens the Input Monitoring settings pane. Status updates on refresh().
-    func requestInputMonitoring() {
-        CGRequestListenEventAccess()
-        openInputMonitoringSettings()
     }
 
     /// Opens a System Settings pane directly — used for the mic `.denied`
@@ -76,10 +63,6 @@ final class PermissionsManager {
 
     func openAccessibilitySettings() {
         open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-    }
-
-    func openInputMonitoringSettings() {
-        open("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
     }
 
     // MARK: - Helpers

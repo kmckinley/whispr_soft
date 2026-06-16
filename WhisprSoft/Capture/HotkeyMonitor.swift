@@ -40,16 +40,12 @@ final class HotkeyMonitor {
     private static let spaceKeyCode: Int64 = 49
 
     /// Create and enable the event tap. Idempotent: a no-op if already
-    /// running. If Input Monitoring isn't granted, requests it and returns
-    /// without a tap — the permission gate + relaunch bring us back.
+    /// running. The tap is ACTIVE (`.defaultTap`, it can discard the Space
+    /// key), so it's authorized by Accessibility — not Input Monitoring. If
+    /// Accessibility isn't granted, `tapCreate` returns nil and we bail; the
+    /// permission gate brings us back once it's granted.
     func start() {
         guard tap == nil else { return }
-
-        guard CGPreflightListenEventAccess() else {
-            Log.hotkey.notice("HotkeyMonitor: Input Monitoring not granted; requesting access")
-            CGRequestListenEventAccess()
-            return
-        }
 
         let mask = (1 << CGEventType.keyDown.rawValue)
                  | (1 << CGEventType.keyUp.rawValue)
@@ -63,7 +59,7 @@ final class HotkeyMonitor {
             callback: hotkeyTapCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            Log.hotkey.error("HotkeyMonitor: tapCreate returned nil (treating as not permitted)")
+            Log.hotkey.error("HotkeyMonitor: tapCreate returned nil (Accessibility not granted?)")
             return
         }
 

@@ -131,7 +131,7 @@ struct MenuBarContent: View {
             }
 
             // Make the gate explicit.
-            Text("WhisprSoft can't run until all three permissions are granted. Input Monitoring may need an app relaunch after you enable it.")
+            Text("WhisprSoft needs these two permissions to run.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.accent.opacity(0.95))
                 .fixedSize(horizontal: false, vertical: true)
@@ -166,27 +166,11 @@ struct MenuBarContent: View {
 
                 permissionGateRow(
                     title: "Accessibility",
-                    why: "Pastes transcribed text into the app you're using.",
+                    why: "Pastes transcribed text and detects the ⌃⌥Space hotkey.",
                     status: permissions.accessibility
                 ) {
                     if permissions.accessibility != .granted {
-                        VStack(alignment: .trailing, spacing: 6) {
-                            gateButton("Grant Access", primary: true) { permissions.requestAccessibility() }
-                            gateButton("Open Settings", primary: false) { permissions.openAccessibilitySettings() }
-                        }
-                    }
-                }
-
-                permissionGateRow(
-                    title: "Input Monitoring",
-                    why: "Detects the ⌃⌥Space hotkey. May need a relaunch after granting.",
-                    status: permissions.inputMonitoring
-                ) {
-                    if permissions.inputMonitoring != .granted {
-                        VStack(alignment: .trailing, spacing: 6) {
-                            gateButton("Grant Access", primary: true) { permissions.requestInputMonitoring() }
-                            gateButton("Open Settings", primary: false) { permissions.openInputMonitoringSettings() }
-                        }
+                        gateButton("Grant", primary: true) { permissions.requestAccessibility() }
                     }
                 }
             }
@@ -284,7 +268,7 @@ struct MenuBarContent: View {
                         .font(.system(size: 13.5, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.95))
                     HStack(spacing: 5) {
-                        StatusDot(color: statusColor, pulsing: isRecording)
+                        StatusDot(color: statusColor)
                         Text(statusText)
                             .font(.system(size: 11))
                             .foregroundStyle(.white.opacity(0.5))
@@ -634,6 +618,9 @@ struct MenuBarContent: View {
                 Image(systemName: "chevron.up")
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(isFirst ? 0.18 : 0.55))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(isFirst)
@@ -644,6 +631,9 @@ struct MenuBarContent: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(isLast ? 0.18 : 0.55))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(isLast)
@@ -1036,23 +1026,15 @@ private struct Keycap: View {
     }
 }
 
-/// The status dot in the header; pulses while recording.
+/// The status dot in the header; a static colored circle (no animation —
+/// the pulse rendered a square artifact mid-cycle).
 private struct StatusDot: View {
     let color: Color
-    var pulsing: Bool = false
-    @State private var pulse = false
     var body: some View {
         Circle()
             .fill(color)
             .frame(width: 7, height: 7)
-            .shadow(color: color.opacity(0.7), radius: (pulsing && pulse) ? 4 : 1)
-            .scaleEffect((pulsing && pulse) ? 1.25 : 1)
-            .animation(pulsing ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : .default, value: pulse)
-            .onAppear { pulse = pulsing }
-            // The dot keeps its identity across state changes (same header
-            // slot), so `onAppear` won't re-fire — drive the pulse off the
-            // `pulsing` flag directly when recording starts/stops.
-            .onChange(of: pulsing) { _, nowPulsing in pulse = nowPulsing }
+            .shadow(color: color.opacity(0.7), radius: 1)
     }
 }
 
