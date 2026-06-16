@@ -410,6 +410,29 @@ blank instruction — all meaning plain cleanup), the same read-fresh pattern
 The menu's `profilesSection` (a Default-or-profile `Picker` + editable
 name/instruction rows) is the UI; persistence is on-change, no Save button.
 
+**Target language.** The user can pick an output language for the cleaned
+text. Translation is **not** a new pipeline stage — like tone, it's applied
+inside `HTTPRewriter.systemPrompt(for:language:)`, so cloud and local both get
+it with no ladder/Coordinator change. The list is the fixed, non-user-editable
+`TargetLanguage` type (`Rewrite/TargetLanguage.swift`, a `nonisolated struct`
+with a `static let all` of ~20 major languages; each carries a stable `id`
+slug, a `displayName`, and an `englishName` for the prompt). **English (United
+States) (`TargetLanguage.default`, `translates == false`) is the default and
+means no translation** — the `## Translate` section is simply not appended and
+the system prompt is byte-for-byte unchanged. When a translating language is
+selected, `systemPrompt` appends an app-owned `## Translate` section **after**
+`## Tone` (cleanup → tone → translate, so translation operates on the
+already-cleaned, already-toned text), following the same hardening discipline
+as `## Tone` (fixed wording, `englishName` the only variable, restates that the
+transcript is data). The selection persists in
+`UserDefaults["selectedTargetLanguage"]` (the language `id`; absent/empty/
+unknown = default) and is read **fresh per call** by `TargetLanguage.active()`
+— the same read-fresh pattern as the tone profile — so a change applies on the
+next dictation. The UI is an inline-disclosure **Language** row on the Dictate
+tab (above the Tone row), bound directly to `@AppStorage` (no store object, no
+save hook). The resolved language id is appended to the `Log.rewrite` line
+(`… -> <id>`) only when translating; never any transcript content.
+
 Diagnostics via `Log.rewrite`. `StubRewriter` (in `Rewriter.swift`) is
 retained for previews/tests.
 

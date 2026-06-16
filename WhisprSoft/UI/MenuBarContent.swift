@@ -29,6 +29,8 @@ struct MenuBarContent: View {
     @State private var showingSettings = false
     /// Inline tone picker disclosure on the Dictate tab.
     @State private var showingTonePicker = false
+    /// Inline target-language picker disclosure on the Dictate tab.
+    @State private var showingLanguagePicker = false
 
     /// The tone profile expanded for editing on the Tone tab; one at a time.
     @State private var expandedProfileID: UUID?
@@ -46,6 +48,11 @@ struct MenuBarContent: View {
     /// Route cleanup to the local LM Studio instead of cloud Claude. Read fresh
     /// per rewrite by RewriteLadder, so toggling takes effect immediately.
     @AppStorage("localMode") private var localMode = false
+
+    /// The target output language id. Read fresh per rewrite by
+    /// `TargetLanguage.active()`, so a change takes effect on the next dictation.
+    /// Default (English US) means no translation.
+    @AppStorage(TargetLanguage.storageKey) private var selectedLanguageID = TargetLanguage.default.id
 
     var body: some View {
         // Hard gate: until all permissions are granted the popover shows only
@@ -465,6 +472,21 @@ struct MenuBarContent: View {
 
     private var dictateGroupedCard: some View {
         VStack(spacing: 0) {
+            // Target-language row → inline picker. Default (English US) = no translation.
+            Button { withAnimation(.easeInOut(duration: 0.18)) { showingLanguagePicker.toggle() } } label: {
+                groupedRow(title: "Language", value: activeLanguageName, chevronUp: showingLanguagePicker)
+            }
+            .buttonStyle(.plain)
+
+            if showingLanguagePicker {
+                hairline
+                ForEach(TargetLanguage.all) { language in
+                    languageOptionRow(name: language.displayName, id: language.id)
+                }
+            }
+
+            hairline
+
             // Tone profile row → inline picker (the ONLY place the active tone is set).
             Button { withAnimation(.easeInOut(duration: 0.18)) { showingTonePicker.toggle() } } label: {
                 groupedRow(title: "Tone profile", value: activeToneName, chevronUp: showingTonePicker)
@@ -554,6 +576,38 @@ struct MenuBarContent: View {
             return profile.name.isEmpty ? "Untitled" : profile.name
         }
         return "Default (clean up only)"
+    }
+
+    /// Language picker option row — parallels `toneOptionRow` but keys on the
+    /// language's String id (vs. the tone picker's UUID?), so it's a small
+    /// separate helper rather than forcing the types to match.
+    private func languageOptionRow(name: String, id: String) -> some View {
+        Button {
+            selectedLanguageID = id
+            withAnimation(.easeInOut(duration: 0.18)) { showingLanguagePicker = false }
+        } label: {
+            HStack {
+                Text(name)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+                Spacer()
+                if selectedLanguageID == id {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.violetCheck)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var activeLanguageName: String {
+        TargetLanguage.all.first(where: { $0.id == selectedLanguageID })?.displayName
+            ?? TargetLanguage.default.displayName
     }
 
     // MARK: - Tone tab (management only — no active selection here)
