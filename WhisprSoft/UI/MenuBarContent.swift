@@ -1125,6 +1125,7 @@ private struct DashedAddButton: View {
                     .strokeBorder(hover ? Color(hex: 0x9A8BFF) : Color.white.opacity(0.18),
                                   style: StrokeStyle(lineWidth: 1, dash: [4]))
             )
+            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
