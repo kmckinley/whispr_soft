@@ -4,6 +4,15 @@
 //
 //  The menu-bar popover. Observes the Coordinator and PermissionsManager.
 //
+//  A 360pt dark, violet-accented, tabbed popover (Dictate / Tone / Corrections)
+//  with a gear-accessed Settings screen, built from the "Kemsoft Voice Popover"
+//  design. All pipeline wiring is reused unchanged — this is a UI shell over the
+//  Coordinator, the two stores, the Keychain, and `@AppStorage("localMode")`.
+//  The hero is a STATUS DISPLAY driven by `coordinator.state`, not a button. The
+//  active tone profile is chosen only on the Dictate tab; the Tone tab is purely
+//  CRUD/reorder management. The MenuBarExtra icon stays `waveform` (set in
+//  WhisprSoftApp).
+//
 
 import SwiftUI
 
@@ -13,283 +22,908 @@ struct MenuBarContent: View {
     @Bindable var corrections: CorrectionsStore
     @Bindable var profiles: RewriteProfilesStore
 
-    /// Draft API key being typed in the field; cleared after Save.
+    enum Tab: String, CaseIterable { case dictate = "Dictate", tone = "Tone", corrections = "Corrections" }
+
+    /// Active body tab. Settings replaces the body entirely when shown.
+    @State private var tab: Tab = .dictate
+    @State private var showingSettings = false
+    /// Inline tone picker disclosure on the Dictate tab.
+    @State private var showingTonePicker = false
+
+    /// The tone profile expanded for editing on the Tone tab; one at a time.
+    @State private var expandedProfileID: UUID?
+
+    /// Settings: reveal the API-key field; whether a key is stored.
+    @State private var addingKey = false
     @State private var apiKeyDraft = ""
-    /// Whether a key is currently stored. Refreshed on appear and after edits.
     @State private var hasStoredKey = false
+
+    /// Measured height of the current scrollable body, capped at 444 (the design
+    /// cap); a `.window` MenuBarExtra sizes to content, so the scroll area needs
+    /// a determinate height. Starts non-zero so the first frame doesn't collapse.
+    @State private var bodyHeight: CGFloat = 380
+
     /// Route cleanup to the local LM Studio instead of cloud Claude. Read fresh
     /// per rewrite by RewriteLadder, so toggling takes effect immediately.
     @AppStorage("localMode") private var localMode = false
 
     var body: some View {
-        // Hard gate: until both permissions are granted the popover shows
-        // only the onboarding checklist — the pipeline control is not even
-        // rendered, so a run is unreachable from the UI.
+        // Hard gate: until all permissions are granted the popover shows only
+        // the styled permissions gate — no tabs/gear/Local-AI, no way through.
+        // The panel chrome is hoisted here so the gate and the granted body
+        // share it.
         Group {
             if permissions.allGranted {
-                pipelineControls
+                grantedBody
             } else {
-                OnboardingView(permissions: permissions)
+                permissionsGate
             }
         }
-        // Re-evaluate the gate on every popover appearance so a permission
-        // changed in System Settings (granted OR revoked) is reflected when
-        // the menu reopens — in both branches, not just onboarding.
+        .frame(width: 360)
+        .background(popoverBackground)
+        .preferredColorScheme(.dark)
+        // Re-evaluate the gate on every popover appearance (granted OR revoked).
         .onAppear { permissions.refresh() }
-        // Arm the hotkey the moment all permissions are granted and disarm it
-        // on revocation. `initial: true` covers the popover opening while
-        // already granted; the AppDelegate handles the launch-time arming.
+        // Arm/disarm the hotkey off the gate; `initial: true` covers opening
+        // while already granted (AppDelegate handles launch-time arming).
         .onChange(of: permissions.allGranted, initial: true) { _, granted in
             if granted { coordinator.startHotkey() } else { coordinator.stopHotkey() }
         }
     }
 
-    private var pipelineControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(statusLine)
-                .font(.headline)
+    // MARK: - Granted container (always-mounted while granted)
 
-            if coordinator.isModelLoading {
-                Text("Preparing transcription model…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    /// The always-mounted shell: header + (tabbed body | Settings). Persistence
+    /// hooks live here so saves fire regardless of which screen is showing.
+    private var grantedBody: some View {
+        VStack(spacing: 0) {
+            header
+
+            if showingSettings {
+                settingsScroll
             } else {
-                Text("Hold ⌃⌥Space to dictate")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Divider()
-
-            localModeSection
-
-            apiKeySection
-
-            Divider()
-
-            profilesSection
-
-            Divider()
-
-            correctionsSection
-
-            Divider()
-
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
+                segmentedControl
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 6)
+                tabScroll
             }
         }
-        .padding()
-        .frame(width: 320)
         .onAppear { hasStoredKey = Keychain.apiKey()?.isEmpty == false }
         .onChange(of: corrections.items) { _, _ in corrections.save() }
         .onChange(of: profiles.items) { _, _ in profiles.save() }
         .onChange(of: profiles.selectedID) { _, _ in profiles.saveSelection() }
     }
 
-    /// One correction row's approximate laid-out height (rounded-border caption
-    /// TextField) and the inter-row spacing, used to size the scroll viewport.
-    private static let correctionRowHeight: CGFloat = 28
-    private static let correctionRowSpacing: CGFloat = 4
-
-    /// Height that shows up to five rows; a longer list scrolls inside it.
-    private var correctionsScrollHeight: CGFloat {
-        let visible = CGFloat(min(corrections.items.count, 5))
-        return visible * Self.correctionRowHeight
-            + max(visible - 1, 0) * Self.correctionRowSpacing
-    }
-
-    /// Always-visible editor for the deterministic keyword corrections applied
-    /// after cleanup. Persists on any change via the `.onChange` above — no
-    /// Save button. Blank rows are harmless (the corrector skips blank `from`).
-    private var correctionsSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Corrections")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("Replaces misheard words after cleanup.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if corrections.items.isEmpty {
-                Text("No corrections yet")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .padding(.vertical, 2)
-            } else {
-                ScrollView {
-                    VStack(spacing: Self.correctionRowSpacing) {
-                        ForEach($corrections.items) { $item in
-                            HStack(spacing: 4) {
-                                // `heard` is forced lowercase as typed — matching
-                                // is case-insensitive anyway, so this just keeps
-                                // the stored key tidy. `replace with` stays verbatim.
-                                TextField("heard", text: Binding(
-                                    get: { item.from },
-                                    set: { $item.from.wrappedValue = $0.lowercased() }
-                                ))
-                                .textFieldStyle(.roundedBorder)
-                                .font(.caption)
-                                Image(systemName: "arrow.right")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                TextField("replace with", text: $item.to)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.caption)
-                                Button {
-                                    corrections.remove(item)
-                                } label: {
-                                    Image(systemName: "minus.circle.fill")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.borderless)
-                            }
-                        }
-                    }
-                }
-                // A ScrollView has no intrinsic height — in the self-sizing
-                // popover it would collapse under `maxHeight`, so pin a fixed
-                // height sized to show up to five rows (more then scroll).
-                .frame(height: correctionsScrollHeight)
-            }
-
-            Button {
-                corrections.add()
-            } label: {
-                Label("Add correction", systemImage: "plus")
-            }
-            .font(.caption)
+    /// Translucent dark panel with a faint violet (top-right) + magenta (bottom)
+    /// radial wash — an approximation of the design's vibrancy.
+    private var popoverBackground: some View {
+        ZStack {
+            Rectangle().fill(.regularMaterial)
+            Color(hex: 0x1A1821).opacity(0.86)
+            RadialGradient(colors: [Theme.accent.opacity(0.16), .clear],
+                           center: .topTrailing, startRadius: 0, endRadius: 300)
+            RadialGradient(colors: [Color(hex: 0xFF6FD8).opacity(0.08), .clear],
+                           center: .bottomLeading, startRadius: 0, endRadius: 240)
         }
+        .ignoresSafeArea()
     }
 
-    /// One profile row's approximate laid-out height: a name TextField plus a
-    /// 2–4 line instruction field, taller than a correction row.
-    private static let profileRowHeight: CGFloat = 96
-    private static let profileRowSpacing: CGFloat = 8
+    // MARK: - Permissions gate (hard gate; shown until allGranted)
 
-    /// Height that shows up to five profile rows; a longer list scrolls inside it.
-    private var profilesScrollHeight: CGFloat {
-        let visible = CGFloat(min(profiles.items.count, 5))
-        return visible * Self.profileRowHeight
-            + max(visible - 1, 0) * Self.profileRowSpacing
-    }
-
-    /// Tone-profile picker + editable list. The active profile lightly restyles
-    /// the cleaned text's tone (applied in HTTPRewriter, so cloud/local both get
-    /// it). Default = plain cleanup, unchanged. Persists on any change via the
-    /// `.onChange` above — no Save button.
-    private var profilesSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Tone profile")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("Adjusts the tone of cleaned-up text. Light touch — keeps your wording.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Picker("Tone profile", selection: $profiles.selectedID) {
-                Text("Default (clean up only)").tag(UUID?.none)
-                ForEach(profiles.items) { profile in
-                    Text(profile.name.isEmpty ? "Untitled" : profile.name)
-                        .tag(UUID?.some(profile.id))
+    /// The styled permission gate shown while `!permissions.allGranted`. Shares
+    /// the panel chrome (hoisted to `body`) and the private `Theme` tokens.
+    /// There is no escape — no segmented control, gear, or tabs — until all
+    /// three are granted; the `body` Group re-gates bidirectionally on appear.
+    private var permissionsGate: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Header (no gear — no way past the gate).
+            HStack(spacing: 10) {
+                appIcon(size: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("WhisprSoft")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.95))
+                    Text("Finish setup to start")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.5))
                 }
-            }
-            .labelsHidden()
-            .font(.caption)
-
-            if !profiles.items.isEmpty {
-                ScrollView {
-                    VStack(spacing: Self.profileRowSpacing) {
-                        ForEach($profiles.items) { $profile in
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 4) {
-                                    TextField("name", text: $profile.name)
-                                        .textFieldStyle(.roundedBorder)
-                                        .font(.caption)
-                                    Button {
-                                        profiles.remove(profile)
-                                    } label: {
-                                        Image(systemName: "minus.circle.fill")
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .buttonStyle(.borderless)
-                                }
-                                TextField("tone instruction", text: $profile.instruction, axis: .vertical)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.caption)
-                                    .lineLimit(2...4)
-                            }
-                        }
-                    }
-                }
-                // A ScrollView has no intrinsic height in the self-sizing popover;
-                // pin a fixed height sized to show up to five rows (more scroll).
-                .frame(height: profilesScrollHeight)
-            }
-
-            Button {
-                profiles.add()
-            } label: {
-                Label("Add profile", systemImage: "plus")
-            }
-            .font(.caption)
-        }
-    }
-
-    /// Local Mode toggle: route cleanup to a local LM Studio instead of cloud
-    /// Claude. Local-only — audio-derived text never leaves the Mac.
-    private var localModeSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle("Local Mode", isOn: $localMode)
-                .font(.caption)
-            Text("Cleanup runs on your local LM Studio (127.0.0.1:1234); audio-derived text never leaves your Mac.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    /// Compact Claude API-key entry. Secondary to the dictation hint: without a
-    /// key, dictation still works but pastes raw (uncleaned) text. Unused while
-    /// Local Mode is on, so it's dimmed with a note.
-    @ViewBuilder
-    private var apiKeySection: some View {
-        if localMode {
-            Text(hasStoredKey
-                 ? "✓ Claude key saved — unused in Local Mode."
-                 : "Claude API key — unused in Local Mode.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        } else if hasStoredKey {
-            HStack(spacing: 6) {
-                Text("✓ Claude key saved")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Spacer()
-                Button("Remove") {
-                    Keychain.deleteAPIKey()
-                    hasStoredKey = false
-                }
-                .font(.caption)
             }
-        } else {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    SecureField("Claude API key", text: $apiKeyDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(saveAPIKey)
-                    Button("Save", action: saveAPIKey)
-                        .disabled(apiKeyDraft.isEmpty)
+
+            // Make the gate explicit.
+            Text("WhisprSoft can't run until all three permissions are granted. Input Monitoring may need an app relaunch after you enable it.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.accent.opacity(0.95))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Theme.accentSoft)
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.accentBorder.opacity(0.5), lineWidth: 0.5))
+                )
+
+            VStack(spacing: 8) {
+                permissionGateRow(
+                    title: "Microphone",
+                    why: "Records your voice to transcribe it.",
+                    status: permissions.microphone
+                ) {
+                    switch permissions.microphone {
+                    case .notDetermined:
+                        gateButton("Grant", primary: true) {
+                            Task { await permissions.requestMicrophone() }
+                        }
+                    case .denied:
+                        gateButton("Open Settings", primary: false) {
+                            permissions.openMicrophoneSettings()
+                        }
+                    case .granted:
+                        EmptyView()
+                    }
                 }
-                Text("Optional — without a key, dictation pastes raw text.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+
+                permissionGateRow(
+                    title: "Accessibility",
+                    why: "Pastes transcribed text into the app you're using.",
+                    status: permissions.accessibility
+                ) {
+                    if permissions.accessibility != .granted {
+                        VStack(alignment: .trailing, spacing: 6) {
+                            gateButton("Grant Access", primary: true) { permissions.requestAccessibility() }
+                            gateButton("Open Settings", primary: false) { permissions.openAccessibilitySettings() }
+                        }
+                    }
+                }
+
+                permissionGateRow(
+                    title: "Input Monitoring",
+                    why: "Detects the ⌃⌥Space hotkey. May need a relaunch after granting.",
+                    status: permissions.inputMonitoring
+                ) {
+                    if permissions.inputMonitoring != .granted {
+                        VStack(alignment: .trailing, spacing: 6) {
+                            gateButton("Grant Access", primary: true) { permissions.requestInputMonitoring() }
+                            gateButton("Open Settings", primary: false) { permissions.openInputMonitoringSettings() }
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Button { permissions.refresh() } label: {
+                    Text("Re-check")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Button { NSApplication.shared.terminate(nil) } label: {
+                    Text("Quit")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.red)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 2)
+        }
+        .padding(14)
+        .onAppear { permissions.refresh() }
+    }
+
+    /// One gate row: leading status indicator + title/why on the left, the
+    /// permission-specific action right-aligned, in card chrome.
+    private func permissionGateRow<Action: View>(
+        title: String,
+        why: String,
+        status: PermissionStatus,
+        @ViewBuilder action: () -> Action
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: status == .granted ? "checkmark.circle.fill" : "exclamationmark.circle")
+                .font(.system(size: 16))
+                .foregroundStyle(status == .granted ? Theme.green : Theme.amber)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                Text(why)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.white.opacity(0.5))
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Spacer(minLength: 8)
+            action()
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .cardSurface()
+    }
+
+    /// A small gate action button: primary = accent-soft fill, secondary =
+    /// faint white fill.
+    private func gateButton(_ title: String, primary: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(primary ? Theme.accent : .white.opacity(0.85))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(primary ? Theme.accentSoft : Color.white.opacity(0.07))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            if showingSettings {
+                Button { withAnimation(.easeInOut(duration: 0.22)) { showingSettings = false } } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.7))
+                        Text("Settings")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.92))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Spacer()
+            } else {
+                appIcon(size: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("WhisprSoft")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.95))
+                    HStack(spacing: 5) {
+                        StatusDot(color: statusColor, pulsing: isRecording)
+                        Text(statusText)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
+                }
+                Spacer()
+                HoverIconButton(system: "gearshape") {
+                    withAnimation(.easeInOut(duration: 0.22)) { showingSettings = true }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private var statusColor: Color {
+        switch coordinator.state {
+        case .idle: return Theme.green
+        case .recording, .transcribing, .rewriting, .injecting: return Theme.accent
+        case .error: return Theme.red
+        }
+    }
+
+    private var statusText: String {
+        switch coordinator.state {
+        case .idle: return coordinator.isModelLoading ? "Preparing…" : "Idle"
+        case .recording: return "Listening"
+        case .transcribing, .rewriting, .injecting: return "Cleaning up"
+        case .error: return "Error"
+        }
+    }
+
+    private var isRecording: Bool {
+        if case .recording = coordinator.state { return true }
+        return false
+    }
+
+    // MARK: - Segmented control
+
+    private var segmentedControl: some View {
+        HStack(spacing: 3) {
+            ForEach(Tab.allCases, id: \.self) { t in
+                Button { withAnimation(.easeInOut(duration: 0.15)) { tab = t } } label: {
+                    Text(t.rawValue)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(tab == t ? .white : Color.white.opacity(0.5))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(tab == t ? Color.white.opacity(0.13) : .clear)
+                                .shadow(color: tab == t ? Theme.accentGlow.opacity(0.5) : .clear, radius: 4)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(Color.white.opacity(0.05))
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5))
+        )
+    }
+
+    // MARK: - Scroll containers (content-sized up to the 444 cap)
+
+    private var tabScroll: some View {
+        measuredScroll {
+            VStack(spacing: 14) {
+                switch tab {
+                case .dictate:     dictateTab
+                case .corrections: correctionsTab
+                case .tone:        toneTab
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+        }
+    }
+
+    private var settingsScroll: some View {
+        measuredScroll { settingsContent.padding(14) }
+            .onAppear { hasStoredKey = Keychain.apiKey()?.isEmpty == false }
+    }
+
+    @ViewBuilder
+    private func measuredScroll<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView {
+            content()
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: HeightKey.self, value: g.size.height)
+                })
+        }
+        .frame(height: min(bodyHeight, 444))
+        .scrollIndicators(.never)
+        .onPreferenceChange(HeightKey.self) { bodyHeight = $0 }
+    }
+
+    // MARK: - Dictate tab
+
+    private var dictateTab: some View {
+        VStack(spacing: 12) {
+            heroCard
+            dictateGroupedCard
+        }
+    }
+
+    private var heroCard: some View {
+        VStack(spacing: 14) {
+            ZStack {
+                if isRecording { PulseRing() }
+                micCircle
+            }
+            .frame(width: 96, height: 96)
+
+            VStack(spacing: 6) {
+                Text(heroTitle)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                heroSubview
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 22)
+        .cardSurface()
+    }
+
+    private var micCircle: some View {
+        Circle()
+            .fill(RadialGradient(colors: [Theme.micTint, Theme.accent, Theme.micDark],
+                                 center: .center, startRadius: 2, endRadius: 40))
+            .frame(width: 76, height: 76)
+            .overlay(Circle().strokeBorder(Color.white.opacity(0.15), lineWidth: 1))
+            .overlay(heroGlyph)
+            .shadow(color: Theme.accentGlow, radius: 16)
+    }
+
+    @ViewBuilder
+    private var heroGlyph: some View {
+        switch coordinator.state {
+        case .idle:
+            if coordinator.isModelLoading { Spinner() } else { appIcon(size: 34) }
+        case .recording:
+            WaveformBars()
+        case .transcribing, .rewriting, .injecting:
+            Spinner()
+        case .error:
+            appIcon(size: 34)
+        }
+    }
+
+    private var heroTitle: String {
+        switch coordinator.state {
+        case .idle: return coordinator.isModelLoading ? "Preparing model…" : "Ready to dictate"
+        case .recording: return "Listening…"
+        case .transcribing, .rewriting, .injecting: return "Cleaning up…"
+        case .error: return "Error"
+        }
+    }
+
+    @ViewBuilder
+    private var heroSubview: some View {
+        switch coordinator.state {
+        case .idle:
+            if coordinator.isModelLoading {
+                EmptyView()
+            } else {
+                HStack(spacing: 5) {
+                    Text("Hold").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
+                    Keycap("⌃"); Keycap("⌥"); Keycap("Space")
+                }
+            }
+        case .recording:
+            heroSub("Release to finish")
+        case .transcribing, .rewriting, .injecting:
+            heroSub("Polishing with \(engineName)")
+        case .error(let message):
+            heroSub(message)
+        }
+    }
+
+    private func heroSub(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11.5))
+            .foregroundStyle(.white.opacity(0.45))
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The cloud/local engine display name (matches the Engine row + Settings).
+    private var engineName: String { localMode ? "LM Studio" : "Claude" }
+
+    private var dictateGroupedCard: some View {
+        VStack(spacing: 0) {
+            // Tone profile row → inline picker (the ONLY place the active tone is set).
+            Button { withAnimation(.easeInOut(duration: 0.18)) { showingTonePicker.toggle() } } label: {
+                groupedRow(title: "Tone profile", value: activeToneName, chevronUp: showingTonePicker)
+            }
+            .buttonStyle(.plain)
+
+            if showingTonePicker {
+                hairline
+                toneOptionRow(name: "Default (clean up only)", id: nil)
+                ForEach(profiles.items) { profile in
+                    toneOptionRow(name: profile.name.isEmpty ? "Untitled" : profile.name, id: profile.id)
+                }
+            }
+
+            hairline
+
+            // Engine row → Settings.
+            Button { withAnimation(.easeInOut(duration: 0.22)) { showingSettings = true } } label: {
+                HStack(spacing: 8) {
+                    Text("Engine")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.white.opacity(0.55))
+                    Spacer()
+                    Circle().fill(localMode ? Theme.green : Theme.accent).frame(width: 6, height: 6)
+                    Text(localMode ? "Local · LM Studio" : "Cloud · Claude")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.3))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 11)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .groupedCardSurface()
+    }
+
+    private func groupedRow(title: String, value: String, chevronUp: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 12.5))
+                .foregroundStyle(.white.opacity(0.55))
+            Spacer()
+            Text(value)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+            Image(systemName: chevronUp ? "chevron.up" : "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.3))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .contentShape(Rectangle())
+    }
+
+    private func toneOptionRow(name: String, id: UUID?) -> some View {
+        Button {
+            profiles.selectedID = id
+            withAnimation(.easeInOut(duration: 0.18)) { showingTonePicker = false }
+        } label: {
+            HStack {
+                Text(name)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+                Spacer()
+                if profiles.selectedID == id {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.violetCheck)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var activeToneName: String {
+        if let id = profiles.selectedID,
+           let profile = profiles.items.first(where: { $0.id == id }) {
+            return profile.name.isEmpty ? "Untitled" : profile.name
+        }
+        return "Default (clean up only)"
+    }
+
+    // MARK: - Tone tab (management only — no active selection here)
+
+    private var toneTab: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Create and edit your tone profiles. Use the arrows to reorder — pick the active one on the Dictate tab.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.white.opacity(0.5))
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 6) {
+                ForEach($profiles.items) { profileCard($0) }
+            }
+
+            DashedAddButton(title: "Add profile") {
+                profiles.add()
+                expandedProfileID = profiles.items.last?.id
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func profileCard(_ profile: Binding<RewriteProfile>) -> some View {
+        let id = profile.wrappedValue.id
+        let expanded = expandedProfileID == id
+
+        VStack(alignment: .leading, spacing: 0) {
+            if expanded {
+                expandedProfileContent(profile)
+            } else {
+                // Collapsed: tapping the row expands it; the leading up/down
+                // arrows reorder one step per click and consume their own taps.
+                collapsedProfileHeader(profile)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 11)
+                .fill(expanded ? Theme.accentSoft : Color.white.opacity(0.035))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11)
+                        .strokeBorder(expanded ? Theme.accentBorder : Color.white.opacity(0.06),
+                                      lineWidth: expanded ? 1 : 0.5)
+                )
+        )
+        .shadow(color: expanded ? Theme.accentGlow.opacity(0.5) : .clear, radius: expanded ? 10 : 0)
+    }
+
+    /// A compact vertical pair of reorder arrows (up over down) in the leading
+    /// slot of a collapsed profile card. Each arrow is disabled + dimmed at the
+    /// list boundary, and consumes its own tap so the row's expand gesture only
+    /// fires when tapping elsewhere.
+    @ViewBuilder
+    private func reorderArrows(for id: UUID) -> some View {
+        let i = profiles.items.firstIndex(where: { $0.id == id })
+        let isFirst = i == 0
+        let isLast = i == profiles.items.count - 1
+        VStack(spacing: 3) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { profiles.moveUp(id) }
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(isFirst ? 0.18 : 0.55))
+            }
+            .buttonStyle(.plain)
+            .disabled(isFirst)
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { profiles.moveDown(id) }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(isLast ? 0.18 : 0.55))
+            }
+            .buttonStyle(.plain)
+            .disabled(isLast)
+        }
+    }
+
+    private func collapsedProfileHeader(_ profile: Binding<RewriteProfile>) -> some View {
+        let p = profile.wrappedValue
+        return HStack(spacing: 10) {
+            reorderArrows(for: p.id)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(p.name.isEmpty ? "Untitled" : p.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1)
+                    if profiles.selectedID == p.id { activeBadge }
+                }
+                Text(p.instruction.isEmpty ? "No description" : p.instruction)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.3))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.18)) { expandedProfileID = p.id }
+        }
+    }
+
+    private func expandedProfileContent(_ profile: Binding<RewriteProfile>) -> some View {
+        let p = profile.wrappedValue
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text(p.name.isEmpty ? "Untitled" : p.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                if profiles.selectedID == p.id { activeBadge }
+                Spacer()
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { expandedProfileID = nil } }
+
+            fieldLabel("Title")
+            TextField("Name", text: profile.name)
+                .insetField()
+
+            fieldLabel("Description")
+            TextField("Tone instruction", text: profile.instruction, axis: .vertical)
+                .lineLimit(2...4)
+                .insetField()
+
+            HStack {
+                Button { profiles.remove(p) } label: {
+                    Text("Delete")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.red)
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Button { withAnimation(.easeInOut(duration: 0.18)) { expandedProfileID = nil } } label: {
+                    Text("Done")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.knobDark)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Theme.accent))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+    }
+
+    private var activeBadge: some View {
+        Text("ACTIVE")
+            .font(.system(size: 9, weight: .bold))
+            .tracking(0.5)
+            .foregroundStyle(Theme.violetCheck)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Theme.accentSoft))
+    }
+
+    private func fieldLabel(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 9, weight: .semibold))
+            .tracking(0.6)
+            .foregroundStyle(.white.opacity(0.4))
+    }
+
+    // MARK: - Corrections tab
+
+    private var correctionsTab: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Replaces misheard words after cleanup, automatically.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.white.opacity(0.5))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("\(corrections.items.count) corrections".uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(.white.opacity(0.4))
+
+            VStack(spacing: 6) {
+                ForEach($corrections.items) { $correction in
+                    correctionRow($correction)
+                }
+            }
+
+            DashedAddButton(title: "Add correction") { corrections.add() }
+        }
+    }
+
+    private func correctionRow(_ correction: Binding<Correction>) -> some View {
+        HStack(spacing: 8) {
+            // `from` is forced lowercase as typed — matching is case-insensitive
+            // anyway, so this just keeps the stored key tidy.
+            TextField("heard", text: Binding(
+                get: { correction.wrappedValue.from },
+                set: { correction.from.wrappedValue = $0.lowercased() }
+            ))
+            .textFieldStyle(.plain)
+            .font(.system(size: 11.5, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.55))
+
+            Image(systemName: "arrow.right")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.3))
+
+            TextField("replace", text: correction.to)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .foregroundStyle(.white.opacity(0.92))
+
+            Button { corrections.remove(correction.wrappedValue) } label: {
+                Image(systemName: "minus.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.3))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(Color.white.opacity(0.04))
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5))
+        )
+    }
+
+    // MARK: - Settings
+
+    private var settingsContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(spacing: 0) {
+                localModeSettingRow
+                hairline
+                apiKeySettingRow
+                hairline
+                shortcutSettingRow
+            }
+            .groupedCardSurface()
+
+            Button { NSApplication.shared.terminate(nil) } label: {
+                Text("Quit WhisprSoft")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Theme.red)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Theme.red.opacity(0.12))
+                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.red.opacity(0.25), lineWidth: 0.5))
+                    )
+            }
+            .buttonStyle(.plain)
+
+            if let version = versionString {
+                Text("Version \(version)")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.white.opacity(0.3))
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private var localModeSettingRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Local mode")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                    Text("Process on-device with LM Studio")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+                Spacer()
+                LocalToggle(isOn: $localMode)
+            }
+            Text("Cleanup runs on your local LM Studio (127.0.0.1:1234). Audio-derived text never leaves your Mac.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.white.opacity(0.4))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+    }
+
+    @ViewBuilder
+    private var apiKeySettingRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Claude API key")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                Spacer()
+                if hasStoredKey {
+                    HStack(spacing: 6) {
+                        Circle().fill(Theme.green).frame(width: 6, height: 6)
+                        Text("Connected").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                    }
+                    Button("Remove") {
+                        Keychain.deleteAPIKey()
+                        hasStoredKey = false
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.red)
+                } else {
+                    HStack(spacing: 6) {
+                        Circle().fill(Color.white.opacity(0.25)).frame(width: 6, height: 6)
+                        Text("Not connected").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                    }
+                    Button(addingKey ? "Cancel" : "Add key") {
+                        withAnimation(.easeInOut(duration: 0.18)) { addingKey.toggle() }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.accent)
+                }
+            }
+
+            if !hasStoredKey && addingKey {
+                HStack(spacing: 6) {
+                    SecureField("sk-ant-…", text: $apiKeyDraft)
+                        .onSubmit(saveAPIKey)
+                        .insetField()
+                    Button("Save", action: saveAPIKey)
+                        .font(.system(size: 11))
+                        .disabled(apiKeyDraft.isEmpty)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+    }
+
+    private var shortcutSettingRow: some View {
+        HStack {
+            Text("Dictation shortcut")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+            Spacer()
+            HStack(spacing: 5) { Keycap("⌃"); Keycap("⌥"); Keycap("Space") }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
     }
 
     private func saveAPIKey() {
@@ -298,17 +932,245 @@ struct MenuBarContent: View {
         Keychain.setAPIKey(key)
         apiKeyDraft = ""
         hasStoredKey = true
+        addingKey = false
     }
 
-    /// Human-readable description of the current pipeline state.
-    private var statusLine: String {
-        switch coordinator.state {
-        case .idle:          return "Idle"
-        case .recording:     return "Recording…"
-        case .transcribing:  return "Transcribing…"
-        case .rewriting:     return "Rewriting…"
-        case .injecting:     return "Injecting…"
-        case .error(let m):  return "Error: \(m)"
+    /// Marketing version from the bundle, or nil if unavailable (don't hardcode).
+    private var versionString: String? {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+    }
+
+    // MARK: - Small shared pieces
+
+    private var hairline: some View {
+        Rectangle().fill(Color.white.opacity(0.06)).frame(height: 0.5)
+    }
+
+    private func appIcon(size: CGFloat) -> some View {
+        Image(nsImage: NSApplication.shared.applicationIconImage)
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
+    }
+}
+
+// MARK: - Design tokens
+
+private enum Theme {
+    static let accent = Color(hex: 0x9A8BFF)
+    static let accentSoft = Color(hex: 0x9A8BFF, alpha: 0.16)
+    static let accentBorder = Color(hex: 0x9A8BFF, alpha: 0.45)
+    static let accentGlow = Color(hex: 0x9A8BFF, alpha: 0.40)
+    static let violetCheck = Color(hex: 0xB6ABFF)
+    static let green = Color(hex: 0x5FD39A)
+    static let amber = Color(hex: 0xF5B14C)
+    static let red = Color(hex: 0xFF8080)
+    static let micTint = Color(hex: 0xCFC9FF)
+    static let micDark = Color(hex: 0x6A59E0)
+    static let knobDark = Color(hex: 0x171426)
+}
+
+private extension Color {
+    init(hex: UInt, alpha: Double = 1) {
+        self.init(.sRGB,
+                  red: Double((hex >> 16) & 0xFF) / 255,
+                  green: Double((hex >> 8) & 0xFF) / 255,
+                  blue: Double(hex & 0xFF) / 255,
+                  opacity: alpha)
+    }
+}
+
+private extension View {
+    /// Card chrome: hairline-bordered translucent rounded rectangle.
+    func cardSurface() -> some View {
+        background(
+            RoundedRectangle(cornerRadius: 13)
+                .fill(Color.white.opacity(0.035))
+                .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5))
+        )
+    }
+
+    /// Grouped-card chrome (rows pad themselves; no outer padding).
+    func groupedCardSurface() -> some View {
+        background(
+            RoundedRectangle(cornerRadius: 13)
+                .fill(Color.white.opacity(0.035))
+                .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5))
+        )
+    }
+
+    /// Inset, transparent text-field chrome (reads as part of the card).
+    func insetField() -> some View {
+        textFieldStyle(.plain)
+            .font(.system(size: 12.5))
+            .foregroundStyle(.white.opacity(0.92))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5))
+            )
+    }
+}
+
+// MARK: - Reusable subviews
+
+/// A styled keycap (e.g. ⌃ ⌥ Space).
+private struct Keycap: View {
+    let label: String
+    init(_ label: String) { self.label = label }
+    var body: some View {
+        Text(label)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.85))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.white.opacity(0.10))
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+                    .shadow(color: .black.opacity(0.25), radius: 1, y: 1)
+            )
+    }
+}
+
+/// The status dot in the header; pulses while recording.
+private struct StatusDot: View {
+    let color: Color
+    var pulsing: Bool = false
+    @State private var pulse = false
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 7, height: 7)
+            .shadow(color: color.opacity(0.7), radius: (pulsing && pulse) ? 4 : 1)
+            .scaleEffect((pulsing && pulse) ? 1.25 : 1)
+            .animation(pulsing ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : .default, value: pulse)
+            .onAppear { pulse = pulsing }
+            // The dot keeps its identity across state changes (same header
+            // slot), so `onAppear` won't re-fire — drive the pulse off the
+            // `pulsing` flag directly when recording starts/stops.
+            .onChange(of: pulsing) { _, nowPulsing in pulse = nowPulsing }
+    }
+}
+
+/// Seven staggered waveform bars (recording hero).
+private struct WaveformBars: View {
+    private let heights: [CGFloat] = [16, 24, 30, 21, 30, 24, 16]
+    @State private var animating = false
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(heights.indices, id: \.self) { i in
+                Capsule()
+                    .fill(Color.white.opacity(0.95))
+                    .frame(width: 3, height: heights[i])
+                    .scaleEffect(y: animating ? 1 : 0.4, anchor: .center)
+                    .animation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true).delay(Double(i) * 0.08),
+                               value: animating)
+            }
         }
+        .onAppear { animating = true }
+    }
+}
+
+/// Expanding/fading accent ring behind the recording hero.
+private struct PulseRing: View {
+    @State private var animate = false
+    var body: some View {
+        Circle()
+            .strokeBorder(Color(hex: 0x9A8BFF, alpha: 0.45), lineWidth: 2)
+            .frame(width: 76, height: 76)
+            .scaleEffect(animate ? 1.45 : 0.95)
+            .opacity(animate ? 0 : 1)
+            .animation(.easeOut(duration: 1.6).repeatForever(autoreverses: false), value: animate)
+            .onAppear { animate = true }
+    }
+}
+
+/// A 30pt indeterminate spinner (processing / model-loading hero).
+private struct Spinner: View {
+    @State private var rotate = false
+    var body: some View {
+        ZStack {
+            Circle().stroke(Color.white.opacity(0.25), lineWidth: 2.5)
+            Circle()
+                .trim(from: 0, to: 0.25)
+                .stroke(Color.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(rotate ? 360 : 0))
+                .animation(.linear(duration: 0.7).repeatForever(autoreverses: false), value: rotate)
+        }
+        .frame(width: 30, height: 30)
+        .onAppear { rotate = true }
+    }
+}
+
+/// A 30×30 icon button with an 8pt hover background (the header gear).
+private struct HoverIconButton: View {
+    let system: String
+    let action: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(0.7))
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(hover ? 0.08 : 0)))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+    }
+}
+
+/// A full-width dashed "add" button; border tints violet on hover.
+private struct DashedAddButton: View {
+    let title: String
+    let action: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
+                Text(title).font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(.white.opacity(0.7))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(hover ? Color(hex: 0x9A8BFF) : Color.white.opacity(0.18),
+                                  style: StrokeStyle(lineWidth: 1, dash: [4]))
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+    }
+}
+
+/// The custom Local-mode toggle (violet, glowing when on).
+private struct LocalToggle: View {
+    @Binding var isOn: Bool
+    var body: some View {
+        Button { isOn.toggle() } label: {
+            ZStack(alignment: isOn ? .trailing : .leading) {
+                Capsule()
+                    .fill(isOn ? AnyShapeStyle(Color(hex: 0x9A8BFF)) : AnyShapeStyle(Color.white.opacity(0.14)))
+                    .frame(width: 40, height: 24)
+                    .shadow(color: isOn ? Color(hex: 0x9A8BFF, alpha: 0.4) : .clear, radius: 6)
+                Circle().fill(.white).frame(width: 18, height: 18).padding(3)
+            }
+        }
+        .buttonStyle(.plain)
+        .animation(.spring(duration: 0.25), value: isOn)
+    }
+}
+
+/// Measures content height so the scroll area can size to content up to the cap.
+private struct HeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

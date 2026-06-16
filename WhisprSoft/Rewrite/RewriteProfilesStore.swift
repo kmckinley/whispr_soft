@@ -54,6 +54,19 @@ final class RewriteProfilesStore {
         }
     }
 
+    /// Move a profile one step toward the top. Per-click reorder (the Tone
+    /// tab's up/down arrows). Saved via the view's `.onChange(of: items)`.
+    func moveUp(_ id: UUID) {
+        guard let i = items.firstIndex(where: { $0.id == id }), i > 0 else { return }
+        items.swapAt(i, i - 1)
+    }
+
+    /// Move a profile one step toward the bottom.
+    func moveDown(_ id: UUID) {
+        guard let i = items.firstIndex(where: { $0.id == id }), i < items.count - 1 else { return }
+        items.swapAt(i, i + 1)
+    }
+
     /// Persist the current list. Called by the view whenever `items` changes.
     func save() {
         guard let data = try? JSONEncoder().encode(items) else { return }

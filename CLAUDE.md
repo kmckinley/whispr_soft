@@ -51,8 +51,7 @@ abstraction.
     Security/
       Keychain.swift        // Claude API key store (generic password)
     UI/
-      MenuBarContent.swift  // the menu-bar popover
-      OnboardingView.swift  // the permission checklist (hard gate)
+      MenuBarContent.swift  // the menu-bar popover (incl. the permissions gate)
 
 The Xcode project uses a `PBXFileSystemSynchronizedRootGroup`: files on
 disk under `WhisprSoft/` are picked up automatically — no pbxproj edits
@@ -107,9 +106,11 @@ the change.
 
 **Hard gate:** `PermissionsManager` (`@MainActor`, `@Observable`) is the
 single source of truth for status; the UI observes it. While
-`!allGranted`, the popover shows `OnboardingView` and the pipeline
-control is not rendered, so a run is unreachable. The gate lives in the
-UI only — the Coordinator stays free of permission concerns. The gate
+`!allGranted`, the popover shows only `MenuBarContent`'s styled
+`permissionsGate` (no tabs/gear/Local-AI) and the pipeline control is not
+rendered, so a run is unreachable. There is **no** Permissions section in
+Settings — the auto re-gating below handles revocation. The gate lives in
+the UI only — the Coordinator stays free of permission concerns. The gate
 re-evaluates **bidirectionally** on every popover open: the `.onAppear`
 refresh lives on `MenuBarContent`, so a revocation re-gates and a fresh
 grant un-gates. The same `MenuBarContent` arms/disarms the hotkey off the
@@ -445,10 +446,52 @@ Cloud Mode.
 
 Menu-bar agent via SwiftUI `MenuBarExtra` (`.window` style) with
 `LSUIElement = YES` (set as `INFOPLIST_KEY_LSUIElement` on the app
-target). No dock icon, no main window. The popover is width-constrained
-(`.frame(width: 320)`), so multi-line caption `Text` needs
-`.fixedSize(horizontal: false, vertical: true)` or it truncates instead of
-wrapping.
+target). No dock icon, no main window. The `MenuBarExtra` icon is the
+`waveform` systemImage. Multi-line caption `Text` in the fixed-width popover
+needs `.fixedSize(horizontal: false, vertical: true)` or it truncates instead
+of wrapping.
+
+The popover is a **360pt dark, violet-accented, tabbed** panel (the "Kemsoft
+Voice Popover" design), all in `UI/MenuBarContent.swift`. A persistent header
+(app-icon logo via `NSApplication.shared.applicationIconImage` + "WhisprSoft" +
+a live status dot/text from `coordinator.state`, gear → Settings) sits above
+either the tabbed body or the Settings screen:
+
+- **Dictate** — a hero *status display* (NOT a button) driven by
+  `coordinator.state`: idle shows the app icon + ⌃⌥Space keycaps, recording the
+  animated waveform + pulse ring, processing/model-loading the spinner, error
+  the message. Below it a grouped card: a **Tone profile** row whose inline
+  picker is the **only** place the active tone is chosen (sets
+  `profiles.selectedID`, nil = Default), and an **Engine** row (from
+  `@AppStorage("localMode")`) → Settings.
+- **Tone** — management only (no selection): `profiles.items` as collapsed
+  cards (up/down arrow pair + name + "Active" badge + description) that expand
+  to edit name/instruction with Delete/Done. Reorder is **per-click up/down
+  arrows** in the card's leading slot (`profiles.moveUp/moveDown`, each a
+  one-step `swapAt`), disabled+dimmed at the list ends; the arrow Buttons
+  consume their own taps so the row's `.onTapGesture` (expand) only fires
+  elsewhere. (Drag-reorder was tried and abandoned after three failed runtime
+  iterations.) Rows render in the shared `measuredScroll` like the other tabs.
+- **Corrections** — `corrections.items` as inline-editable rows (+ add/delete).
+- **Settings** (gear) — custom Local-mode toggle (`localMode`), the real
+  Keychain key add/remove flow, the shortcut keycaps, Quit, and the bundle
+  `CFBundleShortVersionString`.
+
+Persistence `.onChange` hooks (`corrections.items`, `profiles.items`,
+`profiles.selectedID`) and the permission/hotkey hooks live on the
+always-mounted container, not a tab. Tabs scroll within a content-measured
+height capped at ~444pt (a `.window` MenuBarExtra sizes to content, so the
+scroll area needs a determinate height — see the `HeightKey` preference).
+`AccentColor.colorset` is set to the violet `#9A8BFF` so system controls tint
+to match. The permission hard-gate is a redesigned in-popover `permissionsGate`
+(in `MenuBarContent`, styled to match the panel, reusing `PermissionsManager`):
+a header, an accent-tinted blocking notice, three permission cards (status glyph
++ why + Grant/Open-Settings actions), and a Re-check/Quit footer. Shown until
+`allGranted`; the panel chrome (`.frame(width: 360)`, `popoverBackground`,
+`.preferredColorScheme(.dark)`) is hoisted to the outer container so the gate
+and granted body share it. There is **no** Permissions section in Settings —
+the `.onAppear { permissions.refresh() }` auto re-gating handles revocation.
+`OnboardingView` was removed.
 
 The product file name, target name, and `PRODUCT_NAME` are all `WhisprSoft`,
 producing `WhisprSoft.app`; the bundle id is `com.whisprsoft`.
