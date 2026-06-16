@@ -11,6 +11,7 @@ struct MenuBarContent: View {
     let coordinator: Coordinator
     let permissions: PermissionsManager
     @Bindable var corrections: CorrectionsStore
+    @Bindable var profiles: RewriteProfilesStore
 
     /// Draft API key being typed in the field; cleared after Save.
     @State private var apiKeyDraft = ""
@@ -66,6 +67,10 @@ struct MenuBarContent: View {
 
             Divider()
 
+            profilesSection
+
+            Divider()
+
             correctionsSection
 
             Divider()
@@ -78,6 +83,8 @@ struct MenuBarContent: View {
         .frame(width: 320)
         .onAppear { hasStoredKey = Keychain.apiKey()?.isEmpty == false }
         .onChange(of: corrections.items) { _, _ in corrections.save() }
+        .onChange(of: profiles.items) { _, _ in profiles.save() }
+        .onChange(of: profiles.selectedID) { _, _ in profiles.saveSelection() }
     }
 
     /// One correction row's approximate laid-out height (rounded-border caption
@@ -151,6 +158,81 @@ struct MenuBarContent: View {
                 corrections.add()
             } label: {
                 Label("Add correction", systemImage: "plus")
+            }
+            .font(.caption)
+        }
+    }
+
+    /// One profile row's approximate laid-out height: a name TextField plus a
+    /// 2–4 line instruction field, taller than a correction row.
+    private static let profileRowHeight: CGFloat = 96
+    private static let profileRowSpacing: CGFloat = 8
+
+    /// Height that shows up to five profile rows; a longer list scrolls inside it.
+    private var profilesScrollHeight: CGFloat {
+        let visible = CGFloat(min(profiles.items.count, 5))
+        return visible * Self.profileRowHeight
+            + max(visible - 1, 0) * Self.profileRowSpacing
+    }
+
+    /// Tone-profile picker + editable list. The active profile lightly restyles
+    /// the cleaned text's tone (applied in HTTPRewriter, so cloud/local both get
+    /// it). Default = plain cleanup, unchanged. Persists on any change via the
+    /// `.onChange` above — no Save button.
+    private var profilesSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Tone profile")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Adjusts the tone of cleaned-up text. Light touch — keeps your wording.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Picker("Tone profile", selection: $profiles.selectedID) {
+                Text("Default (clean up only)").tag(UUID?.none)
+                ForEach(profiles.items) { profile in
+                    Text(profile.name.isEmpty ? "Untitled" : profile.name)
+                        .tag(UUID?.some(profile.id))
+                }
+            }
+            .labelsHidden()
+            .font(.caption)
+
+            if !profiles.items.isEmpty {
+                ScrollView {
+                    VStack(spacing: Self.profileRowSpacing) {
+                        ForEach($profiles.items) { $profile in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 4) {
+                                    TextField("name", text: $profile.name)
+                                        .textFieldStyle(.roundedBorder)
+                                        .font(.caption)
+                                    Button {
+                                        profiles.remove(profile)
+                                    } label: {
+                                        Image(systemName: "minus.circle.fill")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.borderless)
+                                }
+                                TextField("tone instruction", text: $profile.instruction, axis: .vertical)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.caption)
+                                    .lineLimit(2...4)
+                            }
+                        }
+                    }
+                }
+                // A ScrollView has no intrinsic height in the self-sizing popover;
+                // pin a fixed height sized to show up to five rows (more scroll).
+                .frame(height: profilesScrollHeight)
+            }
+
+            Button {
+                profiles.add()
+            } label: {
+                Label("Add profile", systemImage: "plus")
             }
             .font(.caption)
         }

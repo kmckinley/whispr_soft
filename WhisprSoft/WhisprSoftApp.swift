@@ -16,7 +16,8 @@ struct WhisprSoftApp: App {
         MenuBarExtra("WhisprSoft", systemImage: "waveform") {
             MenuBarContent(coordinator: appDelegate.coordinator,
                            permissions: appDelegate.permissions,
-                           corrections: appDelegate.corrections)
+                           corrections: appDelegate.corrections,
+                           profiles: appDelegate.profiles)
         }
         .menuBarExtraStyle(.window)
     }
@@ -31,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let coordinator = Coordinator()
     let permissions = PermissionsManager()
     let corrections = CorrectionsStore()
+    let profiles = RewriteProfilesStore()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         permissions.refresh()

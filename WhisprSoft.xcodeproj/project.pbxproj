@@ -279,7 +279,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.whisprsoft";
+				PRODUCT_BUNDLE_IDENTIFIER = com.whisprsoft;
 				PRODUCT_NAME = WhisprSoft;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -316,7 +316,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.whisprsoft";
+				PRODUCT_BUNDLE_IDENTIFIER = com.whisprsoft;
 				PRODUCT_NAME = WhisprSoft;
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
