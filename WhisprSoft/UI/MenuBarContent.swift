@@ -17,6 +17,7 @@
 import SwiftUI
 import AppKit
 import Carbon.HIToolbox  // kVK_Escape for the shortcut recorder
+import os                // Log.hotkey diagnostics in the chord recorder
 
 struct MenuBarContent: View {
     let coordinator: Coordinator
@@ -76,6 +77,11 @@ struct MenuBarContent: View {
     @State private var recordingChordIndex: Int?
     @State private var chordMonitor: Any?
     @State private var chordHint: String?
+    /// Fires a soft "didn't reach the app" note if no chord is captured within a
+    /// few seconds of starting — a best-effort signal that the combo may be grabbed
+    /// by macOS or another app before it reaches our local monitor. Cancelled on
+    /// capture/stop so it never fires for a completed or abandoned recording.
+    @State private var chordTimeoutWork: DispatchWorkItem?
 
     /// The active chord, decoded from `shortcutStorage` (default on malformed).
     /// Shared by `shortcutSettingRow` and the Dictate hero so they can't drift.
@@ -1439,8 +1445,8 @@ struct MenuBarContent: View {
                 // default chord and every tone chord must have unique keyCodes, or
                 // HotkeyMonitor.matchChord (default-first) silently shadows the
                 // tone chord. Reject here so the invariant holds from both sides.
-                if toneChords.slots.contains(where: { $0.keyCode == shortcut.keyCode }) {
-                    shortcutHint = "That key is used by a tone shortcut."
+                if let holder = toneSlotHolder(keyCode: shortcut.keyCode) {
+                    shortcutHint = "Already used by \(holder)."
                     return nil   // keep recording
                 }
                 shortcutStorage = shortcut.storageString
@@ -1621,9 +1627,18 @@ struct MenuBarContent: View {
     /// a phantom dictation, then a local monitor captures the next key — accepting
     /// ONLY Control+Option + a single key, and rejecting collisions.
     private func startRecordingChord(_ index: Int) {
-        // Mutually exclusive with the default-shortcut recorder (see
-        // startRecordingShortcut): only one capture session may be live.
+        // Tear down ANY in-progress capture first — the default-shortcut recorder
+        // AND a chord recorder already running on another row. The latter is
+        // reachable: while one row records, the other rows still show an active
+        // "Set key"/"Change" button, so the user can switch rows mid-capture.
+        // Without stopRecordingChord() here, reassigning `chordMonitor` below
+        // would LEAK the previous NSEvent monitor (losing the reference doesn't
+        // remove it). Local monitors fire in install order, so the stale monitor —
+        // which captured a DIFFERENT row's `index` — would intercept the next
+        // ⌃⌥+key, write to the wrong slot, and swallow the event (return nil) so
+        // the intended row's monitor never runs. Only one capture may be live.
         stopRecordingShortcut()
+        stopRecordingChord()
         chordHint = nil
         recordingChordIndex = index
         coordinator.stopHotkey()
@@ -1632,6 +1647,16 @@ struct MenuBarContent: View {
             if event.type == .flagsChanged { return event }
 
             let mods = event.modifierFlags.intersection([.control, .option, .command, .shift])
+
+            // Diagnostic: a captured keyDown reached us. If a chord SILENTLY fails
+            // to record, the absence of this line for that combo is the signal it
+            // was grabbed before reaching the app (vs. fired-but-rejected). Identity
+            // is keyCode + the fixed ⌃⌥ flags — NEVER the Option-modified character
+            // (⌥D→∂, ⌥1→¡, …), which would mishandle exactly those keys.
+            Log.hotkey.notice("chord recorder keyDown keyCode=\(event.keyCode, privacy: .public) mods=\(mods.rawValue, privacy: .public)")
+
+            // A real key arrived: cancel the "didn't reach the app" soft note.
+            chordTimeoutWork?.cancel(); chordTimeoutWork = nil
 
             // Bare Escape cancels without changing the slot.
             if event.keyCode == UInt16(kVK_Escape) && mods.isEmpty {
@@ -1648,7 +1673,8 @@ struct MenuBarContent: View {
 
             let keyCode = Int64(event.keyCode)
             // Collision: keyCode must be unique across the default chord and the
-            // other tone slots, so the tap can disambiguate the press.
+            // other tone slots, so the tap can disambiguate the press. Names the
+            // holder so the block is visible, not silent.
             if let conflict = chordConflict(keyCode: keyCode, excluding: index) {
                 chordHint = conflict
                 return nil
@@ -1660,9 +1686,22 @@ struct MenuBarContent: View {
             stopRecordingChord()   // re-arms the tap with the new binding
             return nil
         }
+
+        // Best-effort external-grab hint: if nothing is captured within a few
+        // seconds, surface a soft note (a guess, not a lookup). Kept if a collision
+        // message is already showing — that's a more specific explanation.
+        let work = DispatchWorkItem {
+            if recordingChordIndex == index, chordHint == nil {
+                chordHint = "This combo didn't reach the app — it may be reserved by macOS or another app."
+            }
+        }
+        chordTimeoutWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5, execute: work)
     }
 
     private func stopRecordingChord() {
+        chordTimeoutWork?.cancel()
+        chordTimeoutWork = nil
         if let monitor = chordMonitor {
             NSEvent.removeMonitor(monitor)
             chordMonitor = nil
@@ -1679,14 +1718,29 @@ struct MenuBarContent: View {
     /// A collision message if `keyCode` clashes with the default dictation chord
     /// or another tone slot, else nil. keyCode-level (conservative): it blocks a
     /// few technically-unambiguous combos, but guarantees the tap never co-fires.
+    /// Names the holder so the block is visible feedback, not a silent no-op.
     private func chordConflict(keyCode: Int64, excluding index: Int) -> String? {
         if currentShortcut.keyCode == keyCode {
-            return "That key is the dictation shortcut."
+            return "Already used by the dictation shortcut."
         }
-        for (i, slot) in toneChords.slots.enumerated() where i != index {
-            if slot.keyCode == keyCode {
-                return "That key is used by another tone shortcut."
+        if let holder = toneSlotHolder(keyCode: keyCode, excluding: index) {
+            return "Already used by \(holder)."
+        }
+        return nil
+    }
+
+    /// Names the tone slot bound to `keyCode` (excluding one index), or nil if
+    /// none — its tone name when set (e.g. `tone “Professional”`), else its
+    /// position (`tone shortcut 2`). Shared by both recorders' collision messages.
+    private func toneSlotHolder(keyCode: Int64, excluding index: Int? = nil) -> String? {
+        for (i, slot) in toneChords.slots.enumerated() {
+            if i == index { continue }
+            guard slot.keyCode == keyCode else { continue }
+            if let id = slot.toneID,
+               let profile = profiles.items.first(where: { $0.id == id }), !profile.name.isEmpty {
+                return "tone “\(profile.name)”"
             }
+            return "tone shortcut \(i + 1)"
         }
         return nil
     }
