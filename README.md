@@ -70,7 +70,7 @@ Corrections) plus a Settings screen behind the gear.
 
 ### Dictate
 
-![The Dictate tab](screenshots/dictate.png)
+<img src="https://raw.githubusercontent.com/kmckinley/whispr_soft/refs/heads/main/screenshots/dictate.png" alt="The Dictate tab" width="400">
 
 The home screen and live status display. The hero shows the current pipeline
 state — *Ready to dictate* at idle (with the hold-to-talk hint showing your
@@ -94,7 +94,7 @@ it survives closing and reopening the popover but is cleared on quit.
 
 ### Tone
 
-![The Tone tab](screenshots/tone.png)
+<img src="https://raw.githubusercontent.com/kmckinley/whispr_soft/refs/heads/main/screenshots/tone.png" alt="The Tone tab" width="400">
 
 Manage your rewrite tone profiles. Each profile is a short instruction that
 nudges the wording of the cleaned-up text while preserving your own sentences,
@@ -105,7 +105,7 @@ selecting the active tone happens back on Dictate.
 
 ### Corrections
 
-![The Corrections tab](screenshots/corrections.png)
+<img src="https://raw.githubusercontent.com/kmckinley/whispr_soft/refs/heads/main/screenshots/corrections.png" alt="The Corrections tab" width="400">
 
 A deterministic find-and-replace list applied *after* cleanup, just before the
 text is pasted — so neither Whisper's mishearing nor the cleanup model can
@@ -116,7 +116,7 @@ casing you type. Add and remove rows inline.
 
 ### Settings
 
-![The Settings screen](screenshots/settings.png)
+<img src="https://raw.githubusercontent.com/kmckinley/whispr_soft/refs/heads/main/screenshots/settings.png" alt="The Settings screen" width="400">
 
 Behind the gear: the **Local mode** toggle (route cleanup to a local LM Studio
 instance instead of the cloud), the **Claude API key** and **ChatGPT API key**
