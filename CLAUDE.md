@@ -481,10 +481,28 @@ The Rewriter picks one backend by the persisted **Local Mode** toggle
 3. **raw** — if the selected backend is unreachable/fails, pass the
    transcript through unchanged. **Built** (the ladder's fallback).
 
+**Cloud→cloud fallback (opt-in, Cloud Mode only).** When
+`UserDefaults["cloudProviderFallback"]` is on (read **fresh per call**, mirroring
+`localMode`), a failure of the active cloud provider makes the ladder try the
+*other* cloud provider before raw: cloud → other cloud → raw. The other
+provider's key is **defensively re-checked** in the ladder (`Keychain.apiKey()`
+for Claude / `Keychain.openAIKey()` for ChatGPT, non-empty) because a key can be
+removed after the toggle was enabled — if it's missing, the ladder skips straight
+to raw. On a successful cross-provider save the `RewriteResult` carries
+`usedProviderFallback = true` (logged, and surfaced in the dictation log as an
+amber "fallback" tag); both-providers-failed stays `usedProviderFallback = false`
+and uses raw (`usedRawFallback = true`), so the cross-provider success count isn't
+polluted by the both-failed case (which the Console log line covers). The
+**both-failed → raw** result keeps the active provider's `intendedEngine` label.
+The toggle is gated in the UI on **both** cloud keys being present; the ladder's
+defensive check makes a stored `true` inert if either key is later removed.
+
 **Local Mode is local-only** (the privacy guarantee): on → local, falling
-back to raw on failure, **never** to cloud. Off → cloud → raw, as before.
-The two modes never cross over, so audio-derived text leaves the Mac only in
-Cloud Mode.
+back to raw on failure, **never** to cloud (cloud→cloud fallback is the `else`
+branch only — Local Mode never crosses to a cloud provider). Off → cloud → (other
+cloud, if fallback on) → raw. Audio-derived text leaves the Mac only in Cloud
+Mode; with cloud fallback on, a failure can route the text to the *other* cloud
+vendor (Anthropic ↔ OpenAI) before raw.
 
 ## Build / run
 
@@ -531,8 +549,26 @@ the Settings screen:
   it re-arms via `coordinator.startHotkey()` (which reloads the new binding).
   "Reset to default" restores ⌃⌥Space and pushes it to the live tap via
   `coordinator.updateHotkey()`. The binding persists in
-  `@AppStorage(DictationShortcut.storageKey)`), Quit, and the bundle
-  `CFBundleShortVersionString`.
+  `@AppStorage(DictationShortcut.storageKey)`), a **Cloud fallback** toggle
+  (`providerFallbackSettingRow`, `@AppStorage("cloudProviderFallback")`, between
+  the ChatGPT-key row and the shortcut recorder) **enabled only when both cloud
+  keys are present** (reuses `hasStoredKey`/`hasOpenAIKey`; disabled + dimmed with
+  a "add both keys" hint otherwise), Quit, and the bundle
+  `CFBundleShortVersionString`. A **Show logs** toggle (`@AppStorage("showLogs")`)
+  reveals the per-dictation diagnostic log (`logsSection`/`logEntryRow`), with a
+  red "raw fallback" tag and an amber "fallback" tag
+  (`entry.usedProviderFallback`, mutually exclusive with raw on success).
+
+The **dictation log** (`DictationLogStore`, `@MainActor @Observable`, owned by
+`AppDelegate`) **persists** to `UserDefaults["dictationLog"]` as JSON (mirroring
+`CorrectionsStore`): loaded at launch via a nonisolated `loadEntries()` default
+initializer (so the `nonisolated init()` works as a Coordinator default argument),
+`save()` on every `record`/`clear`, capped at 100 (ring buffer, newest first).
+Persistence is privacy-safe because `DictationLogEntry` holds **only**
+counts/timings/engine metadata — never transcript content, so no dictated text
+reaches disk (`id` is omitted from `CodingKeys`; it's only SwiftUI list identity).
+The "Show logs" toggle controls visibility only; collection and persistence always
+happen. Cleared on demand.
 
 Persistence `.onChange` hooks (`corrections.items`, `profiles.items`,
 `profiles.selectedID`) and the permission/hotkey hooks live on the

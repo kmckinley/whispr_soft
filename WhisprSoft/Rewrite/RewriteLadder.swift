@@ -52,10 +52,40 @@ nonisolated struct RewriteLadder: Rewriter {
         do {
             return try await primary.rewrite(text)
         } catch {
-            // Raw passthrough — a backend failure must never block injection;
-            // we always paste something. Crucially, we fall back to raw, never
-            // to the *other* backend: Local Mode stays local-only.
-            Log.rewrite.error("\(label, privacy: .public) rewrite failed, using raw: \(error.localizedDescription, privacy: .public)")
+            Log.rewrite.error("\(label, privacy: .public) rewrite failed: \(error.localizedDescription, privacy: .public)")
+
+            // Cross-provider fallback (Cloud Mode only, opt-in). Local Mode is
+            // never eligible — it stays local-only (the privacy guarantee). The
+            // toggle is read fresh per call so flipping it takes effect at once.
+            let fallbackEnabled = UserDefaults.standard.bool(forKey: "cloudProviderFallback")
+            if !localMode, fallbackEnabled {
+                let active = CloudProvider.active()
+                let other: CloudProvider = active == .openai ? .claude : .openai
+                // Defensive re-check: the toggle could have been enabled while
+                // both keys were set, then a key removed afterwards. If the other
+                // provider's key is gone, skip straight to raw.
+                let otherKey = other == .claude ? Keychain.apiKey() : Keychain.openAIKey()
+                if let otherKey, !otherKey.isEmpty {
+                    let secondary: Rewriter = other == .openai ? openai : claude
+                    do {
+                        var rr = try await secondary.rewrite(text)
+                        rr.usedProviderFallback = true
+                        Log.rewrite.notice("provider fallback: \(active.displayName, privacy: .public) failed, used \(other.displayName, privacy: .public)")
+                        return rr
+                    } catch {
+                        Log.rewrite.error("provider fallback also failed (\(other.displayName, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+                        // Fall through to raw passthrough below.
+                    }
+                }
+            }
+
+            // Raw passthrough — a backend failure must never block injection; we
+            // always paste something. `intendedEngine` keeps the log showing the
+            // active provider's name (e.g. "Claude · raw fallback"). Note
+            // `usedProviderFallback` stays false here even when the secondary
+            // also failed, so the "successful cross-provider save" count stays
+            // clean (the both-failed case is captured by the Console log above).
+            Log.rewrite.error("\(label, privacy: .public) using raw passthrough")
             return RewriteResult(text: text, engine: intendedEngine, model: nil, usedRawFallback: true)
         }
     }

@@ -25,6 +25,13 @@ struct RewriteResult: Sendable {
     let engine: String        // display name: "Claude" / "ChatGPT" / "LM Studio"
     let model: String?        // resolved/pinned model id; nil on raw fallback
     let usedRawFallback: Bool
+    /// True only when the ladder's cross-provider fallback kicked in: the active
+    /// cloud provider failed and the *other* one produced this text. A `var` with
+    /// a default so every existing construction site (the rewriters, the stub,
+    /// the ladder's raw/empty results) compiles unchanged — only the ladder's
+    /// success-via-secondary path sets it true. Mutually exclusive with
+    /// `usedRawFallback` on the success path.
+    var usedProviderFallback: Bool = false
 }
 
 /// Cleans up / reformats transcribed text before injection.

@@ -24,6 +24,10 @@ audio never leaves the Mac.
     or **ChatGPT** (OpenAI, `gpt-4.1-mini`). Each provider has its own API key,
     added in **Settings**; selecting a provider with no key yet sends you to
     Settings to add one. Switching providers takes effect on the next dictation.
+    An optional **cloud fallback** (off by default, enabled in Settings, and only
+    available once *both* cloud keys are set) makes a failure of the active
+    provider automatically try the other one before falling back to the raw
+    transcript.
   - **Local Mode** — a local [LM Studio](https://lmstudio.ai) instance at
     `127.0.0.1:1234`. No key, nothing leaves the Mac. Unchanged by the cloud
     provider choice — Local Mode is always on-device.
@@ -117,6 +121,9 @@ casing you type. Add and remove rows inline.
 Behind the gear: the **Local mode** toggle (route cleanup to a local LM Studio
 instance instead of the cloud), the **Claude API key** and **ChatGPT API key**
 add/remove flows (each stored in the Keychain, shown here as Connected), the
+**Cloud fallback** toggle (if your active cloud provider fails, automatically
+try the other one before the raw transcript — only enabled once *both* the Claude
+and ChatGPT keys are set; if you later remove a key it disables again), the
 **Dictation shortcut** recorder (click **Change** to rebind the hold-to-talk
 chord — at least one modifier plus a key — or **Reset to default** for ⌃⌥Space),
 Quit, and the app version. Add whichever cloud provider's key you plan to use;
@@ -124,13 +131,14 @@ switch between them from the Dictate tab's Engine row.
 
 At the bottom of Settings is a **Show logs** toggle that reveals a per-dictation
 diagnostic log. Each entry reports which engine and model ran, whether cleanup
-fell back to the raw transcript (a red *raw fallback* tag), the per-stage timings
+fell back to the raw transcript (a red *raw fallback* tag) or switched to the
+other cloud provider (an amber *fallback* tag), the per-stage timings
 (speech-to-text, cleanup, and total processing), the input→output character
 counts, where the text went (pasted or sent to the note), and the outcome
-(OK / no audio / error). Logs are **in-memory only**: they're always collected
-while the app runs, the toggle only controls whether they're shown, and they're
-cleared on quit — nothing is written to disk and entries never contain the
-transcript text itself.
+(OK / no audio / error). Logs are **saved between sessions** (stored on this Mac
+and restored at launch) and can be cleared at any time; the toggle only controls
+whether they're shown. Entries never contain the transcript text itself — only
+counts, timings, and engine metadata.
 
 ## Privacy
 
@@ -139,9 +147,16 @@ transcript text itself.
   OpenAI for ChatGPT) **only** when Cloud cleanup mode is active *and* the
   selected provider's API key is set. In every other configuration the transcript
   stays on the Mac.
+- **With Cloud fallback enabled,** a failure of the active cloud provider can
+  route the (text) transcript to the *other* cloud vendor — Anthropic ↔ OpenAI —
+  before it falls back to the raw transcript. This means your dictated text may
+  reach whichever of the two vendors succeeds. The toggle is off by default and
+  only available once both keys are set; leave it off if you want the transcript
+  to go to exactly one vendor.
 - **Local Mode is local-only.** If the local model is unreachable or fails, it
-  falls back to pasting the raw transcript — **never** to the cloud. Audio-derived
-  text leaves the Mac only in Cloud mode.
+  falls back to pasting the raw transcript — **never** to the cloud (the cloud
+  fallback above applies to Cloud mode only). Audio-derived text leaves the Mac
+  only in Cloud mode.
 - The cloud API keys are stored in the login **Keychain** (entered through the
   menu), never in source or config files.
 

@@ -198,7 +198,8 @@ final class Coordinator {
 
             log.record(DictationLogEntry(
                 date: Date(), engine: rr.engine, model: rr.model,
-                usedRawFallback: rr.usedRawFallback, destination: destinationLabel,
+                usedRawFallback: rr.usedRawFallback,
+                usedProviderFallback: rr.usedProviderFallback, destination: destinationLabel,
                 recordMs: recordMs, transcriptionMs: transcriptionMs, rewriteMs: rewriteMs,
                 totalMs: Int(Date().timeIntervalSince(processingStart) * 1000),
                 inputChars: inputChars, outputChars: outputChars, status: "OK"))

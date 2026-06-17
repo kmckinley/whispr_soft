@@ -94,8 +94,13 @@ struct MenuBarContent: View {
     @AppStorage("localMode") private var localMode = false
 
     /// Reveal the per-dictation diagnostic log at the bottom of Settings. Logs
-    /// are always collected in memory; this only controls visibility.
+    /// are always collected and persisted; this only controls visibility.
     @AppStorage("showLogs") private var showLogs = false
+
+    /// Cross-provider cloud fallback: if the active cloud provider fails, try the
+    /// other one before raw. Read fresh per rewrite by RewriteLadder. Cloud Mode
+    /// only; gated in the UI on both cloud keys being present.
+    @AppStorage("cloudProviderFallback") private var cloudProviderFallback = false
 
     /// The target output language id. Read fresh per rewrite by
     /// `TargetLanguage.active()`, so a change takes effect on the next dictation.
@@ -1053,6 +1058,8 @@ struct MenuBarContent: View {
                           onSave: saveOpenAIKey,
                           onRemove: { Keychain.deleteOpenAIKey(); hasOpenAIKey = false })
                 hairline
+                providerFallbackSettingRow
+                hairline
                 shortcutSettingRow
             }
             .groupedCardSurface()
@@ -1105,6 +1112,36 @@ struct MenuBarContent: View {
         .padding(.vertical, 11)
     }
 
+    /// Cross-provider cloud fallback toggle. Enabled only when BOTH cloud keys
+    /// are present (a switch to the other provider needs its key); when either is
+    /// missing it's disabled, dimmed, and shows a hint. If a key is later removed
+    /// the toggle simply disables again — the ladder's defensive key-check makes
+    /// any stored `true` inert until both keys return, so no force-write is needed.
+    private var providerFallbackSettingRow: some View {
+        let bothKeys = hasStoredKey && hasOpenAIKey
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Cloud fallback")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(bothKeys ? 0.9 : 0.4))
+                    Text(bothKeys
+                         ? "If your active cloud model fails, automatically try the other one."
+                         : "Add both your Claude and ChatGPT keys to enable.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(bothKeys ? 0.45 : 0.35))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                LocalToggle(isOn: $cloudProviderFallback)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .disabled(!bothKeys)
+        .opacity(bothKeys ? 1 : 0.6)
+    }
+
     // MARK: - Logs
 
     /// The "Show logs" toggle and, when on, the per-dictation diagnostic list.
@@ -1118,7 +1155,7 @@ struct MenuBarContent: View {
                     Text("Show logs")
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(.white.opacity(0.9))
-                    Text("Per-dictation diagnostics. Kept in memory only, cleared on quit.")
+                    Text("Per-dictation diagnostics. Saved on this Mac; clear anytime.")
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.45))
                         .fixedSize(horizontal: false, vertical: true)
@@ -1169,7 +1206,7 @@ struct MenuBarContent: View {
 
     private func logEntryRow(_ e: DictationLogEntry) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            // Line 1: time · engine (+ raw-fallback tag) · destination.
+            // Line 1: time · engine (+ raw-fallback / provider-fallback tag) · destination.
             HStack(spacing: 6) {
                 Text(e.date, style: .time)
                     .font(.system(size: 11, weight: .medium))
@@ -1185,6 +1222,16 @@ struct MenuBarContent: View {
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(RoundedRectangle(cornerRadius: 4).fill(Theme.red.opacity(0.14)))
+                } else if e.usedProviderFallback {
+                    // The engine field already names the provider that produced the
+                    // text; this just flags that a switch from the active one
+                    // happened. Mutually exclusive with raw fallback on success.
+                    Text("fallback")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(Theme.amber)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.amber.opacity(0.14)))
                 }
                 Spacer()
                 Text(e.destination)
