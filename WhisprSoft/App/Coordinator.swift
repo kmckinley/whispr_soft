@@ -26,6 +26,11 @@ final class Coordinator {
     private let transcriber: Transcriber
     private let rewriter: Rewriter
     private let injector: TextInjector
+    private let scratchpad: ScratchpadStore
+
+    /// Snapshotted in beginDictation() from whether the popover is open; honored
+    /// for the whole run even if the popover is closed before release.
+    private var routingToNote = false
 
     /// The global hold-to-talk hotkey. The Coordinator owns it and wires its
     /// callbacks to begin/end dictation; arm it with startHotkey().
@@ -38,12 +43,14 @@ final class Coordinator {
             cloud: HTTPRewriter(config: .cloud),
             local: HTTPRewriter(config: .local)
         ),
-        injector: TextInjector = PasteboardInjector()
+        injector: TextInjector = PasteboardInjector(),
+        scratchpad: ScratchpadStore = ScratchpadStore()
     ) {
         self.recorder = recorder
         self.transcriber = transcriber
         self.rewriter = rewriter
         self.injector = injector
+        self.scratchpad = scratchpad
     }
 
     // MARK: - Hotkey
@@ -87,7 +94,13 @@ final class Coordinator {
         // flight (a stuck modifier or repeated chord could re-enter).
         guard state == .idle else { return }
 
+        // Snapshot the routing decision: if the popover is open at begin, the
+        // cleaned text goes to the note instead of the frontmost app. Honored
+        // for the whole run even if the popover is closed before release.
+        routingToNote = scratchpad.isPopoverOpen
+
         state = .recording
+        if routingToNote { scratchpad.beginCapture() }
         do {
             try recorder.start()
         } catch {
@@ -129,10 +142,18 @@ final class Coordinator {
             // rewrite (or Whisper) may have left, before the text is injected.
             let corrected = KeywordCorrector.correct(rewritten)
 
-            state = .injecting
-            try injector.inject(corrected)
-
-            state = .idle
+            if routingToNote {
+                // Deliver to the in-popover note — never touch the pasteboard
+                // or synthesize ⌘V in this path.
+                scratchpad.append(corrected)
+                scratchpad.endCapture()
+                routingToNote = false
+                state = .idle
+            } else {
+                state = .injecting
+                try injector.inject(corrected)
+                state = .idle
+            }
         } catch {
             Log.pipeline.error("Pipeline error: \(error.localizedDescription, privacy: .public)")
             recoverFromError(error)
@@ -145,6 +166,10 @@ final class Coordinator {
     /// path; the `if case .error` guard avoids clobbering a run that has since
     /// moved past `.error`.
     private func recoverFromError(_ error: Error) {
+        // Reset note-capture state so a failed run never leaves the box stuck
+        // "capturing" (the no-audio guard routes through here too).
+        scratchpad.endCapture()
+        routingToNote = false
         state = .error(error.localizedDescription)
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))

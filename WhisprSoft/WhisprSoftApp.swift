@@ -17,7 +17,8 @@ struct WhisprSoftApp: App {
             MenuBarContent(coordinator: appDelegate.coordinator,
                            permissions: appDelegate.permissions,
                            corrections: appDelegate.corrections,
-                           profiles: appDelegate.profiles)
+                           profiles: appDelegate.profiles,
+                           scratchpad: appDelegate.scratchpad)
         }
         .menuBarExtraStyle(.window)
     }
@@ -29,10 +30,20 @@ struct WhisprSoftApp: App {
 /// still track them through the delegate.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let coordinator = Coordinator()
+    let scratchpad: ScratchpadStore
+    let coordinator: Coordinator
     let permissions = PermissionsManager()
     let corrections = CorrectionsStore()
     let profiles = RewriteProfilesStore()
+
+    override init() {
+        // Share one store between the Coordinator (writer) and the view
+        // (reader/editor). Use a local to avoid referencing self during init.
+        let pad = ScratchpadStore()
+        self.scratchpad = pad
+        self.coordinator = Coordinator(scratchpad: pad)
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         permissions.refresh()

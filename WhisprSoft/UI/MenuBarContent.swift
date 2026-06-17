@@ -15,12 +15,14 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct MenuBarContent: View {
     let coordinator: Coordinator
     let permissions: PermissionsManager
     @Bindable var corrections: CorrectionsStore
     @Bindable var profiles: RewriteProfilesStore
+    @Bindable var scratchpad: ScratchpadStore
 
     enum Tab: String, CaseIterable { case dictate = "Dictate", tone = "Tone", corrections = "Corrections" }
 
@@ -69,8 +71,11 @@ struct MenuBarContent: View {
         .frame(width: 360)
         .background(popoverBackground)
         .preferredColorScheme(.dark)
-        // Re-evaluate the gate on every popover appearance (granted OR revoked).
-        .onAppear { permissions.refresh() }
+        // Track popover visibility (drives the note-routing decision) and
+        // re-evaluate the gate on every appearance (granted OR revoked). For a
+        // `.window` MenuBarExtra these fire when the popover is shown/dismissed.
+        .onAppear { scratchpad.isPopoverOpen = true; permissions.refresh() }
+        .onDisappear { scratchpad.isPopoverOpen = false }
         // Arm/disarm the hotkey off the gate; `initial: true` covers opening
         // while already granted (AppDelegate handles launch-time arming).
         .onChange(of: permissions.allGranted, initial: true) { _, granted in
@@ -99,6 +104,14 @@ struct MenuBarContent: View {
         .onChange(of: corrections.items) { _, _ in corrections.save() }
         .onChange(of: profiles.items) { _, _ in profiles.save() }
         .onChange(of: profiles.selectedID) { _, _ in profiles.saveSelection() }
+        // When a capture starts routing to the note, surface it: leave Settings
+        // and snap to the Dictate tab so the box is visible. Keyed on
+        // isCapturing (not isExpanded): isCapturing reliably goes false→true on
+        // every capture, whereas isExpanded stays true once the note has text,
+        // so a second burst started on another tab would otherwise snap nothing.
+        .onChange(of: scratchpad.isCapturing) { _, capturing in
+            if capturing { showingSettings = false; tab = .dictate }
+        }
     }
 
     /// Translucent dark panel with a faint violet (top-right) + magenta (bottom)
@@ -381,8 +394,73 @@ struct MenuBarContent: View {
     private var dictateTab: some View {
         VStack(spacing: 12) {
             heroCard
+            if scratchpad.isExpanded { noteCard }
             dictateGroupedCard
         }
+        .animation(.easeInOut(duration: 0.22), value: scratchpad.isExpanded)
+    }
+
+    /// The in-popover quick-note box, shown at the bottom of the Dictate tab
+    /// when a capture routes here (or while it holds text). Editable by hand.
+    private var noteCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Note")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                if scratchpad.isCapturing {
+                    Circle().fill(Theme.accent).frame(width: 6, height: 6)
+                        .shadow(color: Theme.accentGlow, radius: 3)
+                }
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(scratchpad.text, forType: .string)
+                } label: {
+                    Text("Copy")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(scratchpad.text.isEmpty ? .white.opacity(0.25) : Theme.accent)
+                }
+                .buttonStyle(.plain)
+                .disabled(scratchpad.text.isEmpty)
+
+                Button {
+                    scratchpad.clear()
+                } label: {
+                    Text("Clear")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Theme.red)
+                }
+                .buttonStyle(.plain)
+            }
+
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $scratchpad.text)
+                    .scrollContentBackground(.hidden)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .frame(minHeight: 70, maxHeight: 150)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white.opacity(0.05))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5))
+                    )
+
+                if scratchpad.text.isEmpty {
+                    Text("Dictate or type a quick note…")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.white.opacity(0.3))
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 12)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+        .padding(12)
+        .cardSurface()
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     private var heroCard: some View {

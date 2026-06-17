@@ -37,6 +37,14 @@ focused. Transcription runs **on-device** — your audio never leaves the Mac.
 - **Keyword corrections.** A deterministic, user-editable find-and-replace list
   (e.g. fix a name Whisper consistently mishears) is applied *after* cleanup, so
   neither Whisper nor the cleanup model can reintroduce the wrong spelling.
+- **Quick-note scratchpad.** If you dictate while the menu-bar popover is open —
+  when there's no text field to paste into — the cleaned-up result is appended to
+  a note box that animates open on the Dictate tab instead of being pasted. Each
+  burst adds a new line; the full pipeline (cleanup, tone, language, corrections)
+  still runs. The note is hand-editable, has **Copy** and **Clear** actions, and
+  is kept in memory for the session (it survives closing and reopening the
+  popover, but is cleared on quit and never written to disk). Dictating with the
+  popover closed pastes into the frontmost app exactly as before.
 - **Menu-bar agent.** Runs as a menu-bar item with no dock icon and no main
   window. Settings (API key, Local Mode, tone profiles, corrections) live in the
   menu.
@@ -59,6 +67,12 @@ or choose another to have the cleaned-up text translated before it's pasted;
 **Tone profile** picks the active tone for cleanup (this is the only place the
 active tone is chosen); and **Engine** shows the current cleanup backend —
 Cloud · Claude or Local — and links to Settings.
+
+If you dictate while this popover is open, the cleaned-up text is routed to a
+**note box** that animates open just below the hero (instead of being pasted
+into another app). Each burst appends a new line; the box is hand-editable and
+has **Copy** and **Clear** actions. The note lives in memory for the session —
+it survives closing and reopening the popover but is cleared on quit.
 
 ### Tone
 
