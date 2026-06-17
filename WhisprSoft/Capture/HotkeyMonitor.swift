@@ -2,9 +2,13 @@
 //  HotkeyMonitor.swift
 //  WhisprSoft
 //
-//  Global hold-to-talk hotkey (⌃⌥Space) built on an active CGEventTap.
+//  Global hold-to-talk hotkey built on an active CGEventTap. The chord is
+//  user-configurable (default ⌃⌥Space) via DictationShortcut; the monitor
+//  CACHES it in `shortcut` (reloaded explicitly via reloadShortcut(), not read
+//  per event — the tap sees every keystroke system-wide, so a per-event
+//  UserDefaults read/parse would add work to the latency-sensitive hot path).
 //  Recording runs while the chord is held: onChordDown fires on key-down,
-//  onChordUp on key-up (or when a modifier is released mid-hold).
+//  onChordUp on key-up (or when a required modifier is released mid-hold).
 //
 //  Concurrency: the tap's run-loop source lives on the MAIN run loop, so the
 //  C callback fires on the main thread. The file-scope trampoline is
@@ -19,25 +23,32 @@ import os
 
 @MainActor
 final class HotkeyMonitor {
-    /// Fired when ⌃⌥Space is first pressed. Defaulted to a no-op so the
+    /// Fired when the chord is first pressed. Defaulted to a no-op so the
     /// monitor is usable before the Coordinator wires it up.
     var onChordDown: () -> Void = {}
-    /// Fired when the chord is released (Space up, or a modifier dropped).
+    /// Fired when the chord is released (main key up, or a modifier dropped).
     var onChordUp: () -> Void = {}
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     /// Dictation is active (between onChordDown and onChordUp).
     private var chordEngaged = false
-    /// Space is physically down as part of the gesture: suppress every Space
-    /// event until it lifts. Tracked separately from `chordEngaged` so that
-    /// releasing a *modifier* first (which ends dictation) still consumes the
-    /// trailing Space auto-repeats and keyUp — otherwise they'd leak as typed
-    /// spaces once the modifier-gated consume condition stopped matching.
-    private var consumingSpace = false
+    /// The main key is physically down as part of the gesture: suppress every
+    /// event for that key until it lifts. Tracked separately from `chordEngaged`
+    /// so that releasing a *modifier* first (which ends dictation) still consumes
+    /// the trailing auto-repeats and keyUp — otherwise they'd leak as a typed
+    /// character once the modifier-gated consume condition stopped matching.
+    private var consumingMainKey = false
 
-    /// Space keycode on macOS.
-    private static let spaceKeyCode: Int64 = 49
+    /// The configured chord. Cached, not read per event (see file header);
+    /// refreshed via reloadShortcut() at arm time and on a live binding change.
+    private var shortcut: DictationShortcut = .default
+
+    /// Re-read the configured shortcut from UserDefaults. Called at the top of
+    /// start() (so arming picks up the current binding) and by
+    /// Coordinator.updateHotkey() when the user changes it, so the live tap
+    /// updates without a relaunch.
+    func reloadShortcut() { shortcut = .active() }
 
     /// Create and enable the event tap. Idempotent: a no-op if already
     /// running. The tap is ACTIVE (`.defaultTap`, it can discard the Space
@@ -45,6 +56,7 @@ final class HotkeyMonitor {
     /// Accessibility isn't granted, `tapCreate` returns nil and we bail; the
     /// permission gate brings us back once it's granted.
     func start() {
+        reloadShortcut()
         guard tap == nil else { return }
 
         let mask = (1 << CGEventType.keyDown.rawValue)
@@ -86,7 +98,7 @@ final class HotkeyMonitor {
         tap = nil
         runLoopSource = nil
         chordEngaged = false
-        consumingSpace = false
+        consumingMainKey = false
         Log.hotkey.notice("HotkeyMonitor: event tap disabled")
     }
 
@@ -105,28 +117,31 @@ final class HotkeyMonitor {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
-        let modifiersHeld = flags.contains(.maskControl) && flags.contains(.maskAlternate)
-        let isSpace = keyCode == Self.spaceKeyCode
+        // Subset test: all REQUIRED modifiers present (extra modifiers don't
+        // block). OptionSet.contains is isSuperset, so this matches today's
+        // behavior with the configured chord rather than a hardcoded ⌃⌥.
+        let modifiersHeld = flags.contains(shortcut.cgFlags)
+        let isMainKey = keyCode == shortcut.keyCode
 
         switch type {
-        case .keyDown where isSpace:
-            // Engaging press: Ctrl+Opt+Space while not already engaged.
+        case .keyDown where isMainKey:
+            // Engaging press: required modifiers + main key while not engaged.
             if !chordEngaged && modifiersHeld {
                 chordEngaged = true
-                consumingSpace = true
+                consumingMainKey = true
                 onChordDown()
                 return nil
             }
-            // Auto-repeat (or any Space) once the gesture owns the key — consume
-            // it so no space is typed, even if a modifier was lifted mid-hold.
-            if consumingSpace { return nil }
-            // A plain Space unrelated to the gesture — let it through.
+            // Auto-repeat (or any press of the main key) once the gesture owns
+            // it — consume so no character is typed, even if a modifier lifted.
+            if consumingMainKey { return nil }
+            // A plain press of the main key unrelated to the gesture — pass it.
             return Unmanaged.passUnretained(event)
 
-        case .keyUp where isSpace && consumingSpace:
-            // Space released: stop suppressing, and end the chord if it's still
-            // engaged (it may already have ended via a modifier release below).
-            consumingSpace = false
+        case .keyUp where isMainKey && consumingMainKey:
+            // Main key released: stop suppressing, and end the chord if it's
+            // still engaged (it may already have ended via a modifier release).
+            consumingMainKey = false
             if chordEngaged {
                 chordEngaged = false
                 onChordUp()
@@ -135,8 +150,8 @@ final class HotkeyMonitor {
 
         case .flagsChanged where chordEngaged && !modifiersHeld:
             // A required modifier was released mid-hold: end the chord now, but
-            // keep `consumingSpace` set so the trailing Space auto-repeats and
-            // keyUp are still swallowed. Don't consume the modifier change.
+            // keep `consumingMainKey` set so the trailing main-key auto-repeats
+            // and keyUp are still swallowed. Don't consume the modifier change.
             chordEngaged = false
             onChordUp()
             return Unmanaged.passUnretained(event)

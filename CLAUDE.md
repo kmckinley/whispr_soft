@@ -33,7 +33,8 @@ abstraction.
     Capture/
       AudioRecording.swift  // RecordedAudio + AudioRecording + StubRecorder
       AudioRecorder.swift   // real AVAudioEngine capture
-      HotkeyMonitor.swift   // ⌃⌥Space hold-to-talk CGEventTap
+      HotkeyMonitor.swift   // configurable hold-to-talk CGEventTap (default ⌃⌥Space)
+      DictationShortcut.swift  // the configurable chord (keyCode + modifiers)
     Transcription/
       Transcriber.swift     // Transcriber (+ prepare() default) + StubTranscriber
       WhisperKitTranscriber.swift  // real WhisperKit transcriber (small.en)
@@ -88,7 +89,7 @@ Permissions modeled (both currently gating the pipeline):
   (`INFOPLIST_KEY_NSMicrophoneUsageDescription`).
 - **Accessibility** — required both to post the paste keystroke during
   injection **and** to run the active `CGEventTap` that observes the
-  ⌃⌥Space hotkey (an active `.defaultTap` keystroke-observing tap is
+  dictation hotkey (an active `.defaultTap` keystroke-observing tap is
   authorized by Accessibility, not Input Monitoring — only `.listenOnly`
   taps need the latter, so Input Monitoring is not modeled). Only grantable
   now that the App Sandbox is off (Apple does not support the Accessibility
@@ -238,26 +239,44 @@ awaits the in-flight load. Diagnostics via `Log.transcription`.
 
 `HotkeyMonitor` (`Capture/`) is an **active** `CGEventTap`
 (`.cgSessionEventTap`, `.defaultTap`, head-inserted) on the **main** run
-loop, implementing ⌃⌥Space hold-to-talk. The C trampoline is a file-scope
-`nonisolated func` (a `@convention(c)` pointer can't be formed from a
-MainActor-isolated function under the project's default isolation); it
-bridges into the actor via `MainActor.assumeIsolated`, so `handle(...)` and
-the `onChordDown`/`onChordUp` callbacks stay MainActor-isolated and call the
-Coordinator directly. Space suppression is tracked by `consumingSpace`,
-separate from `chordEngaged`: once the gesture owns the Space key it
-**consumes** (returns nil) *every* Space event — the engaging keyDown,
-WindowServer auto-repeats, and the final keyUp — until Space lifts, so no
-space is ever typed, even if a modifier is released first. `onChordDown`
-fires on the engaging transition; `onChordUp` fires on keyUp **or** a
-modifier released mid-hold (`flagsChanged`), whichever comes first, while
-the trailing Space events keep getting swallowed. It re-enables itself on
+loop, implementing hold-to-talk for a **user-configurable chord** (default
+⌃⌥Space). The chord is modeled by `DictationShortcut` (a `nonisolated struct`:
+`keyCode` + masked `modifiers`, with `storageString`/`init?(storageString:)`
+serialization, `active()`, `cgFlags`, `symbols`, `keyName(for:)` via
+`UCKeyTranslate`, and an `init?(nsEvent:)` validating ≥1 modifier + a
+non-modifier `.keyDown`). The model is **hold-to-talk only, ≥1 modifier + one
+regular key** — no toggle/tap mode, no modifier-only bindings, one shortcut.
+The monitor **caches** the chord in `shortcut` and reloads it via
+`reloadShortcut()` (called at the top of `start()`, before the idempotency
+guard, so arming picks up the current binding; and by
+`Coordinator.updateHotkey()` on a live change). This is the **one** place the
+read-fresh-per-call convention does **not** apply: the tap sees every keystroke
+system-wide, so a per-event `UserDefaults` read/parse would burden the
+latency-sensitive hot path (slow callbacks get disabled by timeout). The C
+trampoline is a file-scope `nonisolated func` (a `@convention(c)` pointer can't
+be formed from a MainActor-isolated function under the project's default
+isolation); it bridges into the actor via `MainActor.assumeIsolated`, so
+`handle(...)` and the `onChordDown`/`onChordUp` callbacks stay MainActor-isolated
+and call the Coordinator directly. `handle(...)` matches the cached chord:
+`isMainKey = keyCode == shortcut.keyCode`, `modifiersHeld =
+flags.contains(shortcut.cgFlags)` (a **subset** test — all *required* modifiers
+present, extras don't block). Main-key suppression is tracked by
+`consumingMainKey`, separate from `chordEngaged`: once the gesture owns the main
+key it **consumes** (returns nil) *every* event for that key — the engaging
+keyDown, WindowServer auto-repeats, and the final keyUp — until it lifts, so no
+character is ever typed, even if a modifier is released first. `onChordDown`
+fires on the engaging transition; `onChordUp` fires on keyUp **or** a required
+modifier released mid-hold (`flagsChanged`), whichever comes first, while the
+trailing main-key events keep getting swallowed. It re-enables itself on
 `.tapDisabledByTimeout`/`.tapDisabledByUserInput`.
 `start()` is idempotent (no-op if the tap exists). The tap is **active**
 (`.defaultTap`), so it's authorized by **Accessibility** — `start()` does
 **not** preflight or request Input Monitoring (`CGPreflightListenEventAccess`
 is gone); it calls `tapCreate` directly and bails on a nil return
 (Accessibility not yet granted), and the permission gate brings it back once
-granted. Diagnostics via `Log.hotkey`.
+granted. Diagnostics via `Log.hotkey`. The shortcut is recorded from Settings
+(an interactive recorder in `MenuBarContent` — see Build / run); the Dictate
+hero and Settings keycaps both render from `DictationShortcut.symbols`.
 
 ### Coordinator entry points
 
@@ -295,8 +314,8 @@ first grant via the gate's `.onChange`. It then calls
 `coordinator.preloadModel()` **unconditionally** — the model load needs no
 permissions, so it warms even while the user is still in onboarding. The
 menu shows a "Preparing transcription model…" line while `isModelLoading`
-(first launch downloads ~480 MB), otherwise the "Hold ⌃⌥Space to dictate"
-hint.
+(first launch downloads ~480 MB), otherwise the "Hold <chord> to dictate"
+hint (the chord rendered from the active `DictationShortcut`, default ⌃⌥Space).
 
 ### Correction stage
 
@@ -485,7 +504,8 @@ artifact mid-cycle) — gear → Settings) sits above either the tabbed body or
 the Settings screen:
 
 - **Dictate** — a hero *status display* (NOT a button) driven by
-  `coordinator.state`: idle shows the app icon + ⌃⌥Space keycaps, recording the
+  `coordinator.state`: idle shows the app icon + the active chord's keycaps
+  (from `DictationShortcut.symbols`), recording the
   animated waveform + pulse ring, processing/model-loading the spinner, error
   the message. Below it a grouped card: a **Tone profile** row whose inline
   picker is the **only** place the active tone is chosen (sets
@@ -501,7 +521,17 @@ the Settings screen:
   iterations.) Rows render in the shared `measuredScroll` like the other tabs.
 - **Corrections** — `corrections.items` as inline-editable rows (+ add/delete).
 - **Settings** (gear) — custom Local-mode toggle (`localMode`), the real
-  Keychain key add/remove flow, the shortcut keycaps, Quit, and the bundle
+  Keychain key add/remove flow, an interactive **dictation-shortcut recorder**
+  (`shortcutSettingRow`: shows the active chord's keycaps + a "Change" affordance;
+  while recording it **disarms the global tap** (`coordinator.stopHotkey()`) so
+  the session-level tap — which sees keystrokes before the local monitor — can't
+  engage a phantom dictation on an overlapping chord, then a local `NSEvent`
+  monitor captures the next chord via `DictationShortcut(nsEvent:)` — bare Escape
+  cancels, a modifier-less press shows a hint and keeps recording; on save/cancel
+  it re-arms via `coordinator.startHotkey()` (which reloads the new binding).
+  "Reset to default" restores ⌃⌥Space and pushes it to the live tap via
+  `coordinator.updateHotkey()`. The binding persists in
+  `@AppStorage(DictationShortcut.storageKey)`), Quit, and the bundle
   `CFBundleShortVersionString`.
 
 Persistence `.onChange` hooks (`corrections.items`, `profiles.items`,

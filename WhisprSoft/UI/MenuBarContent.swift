@@ -16,6 +16,7 @@
 
 import SwiftUI
 import AppKit
+import Carbon.HIToolbox  // kVK_Escape for the shortcut recorder
 
 struct MenuBarContent: View {
     let coordinator: Coordinator
@@ -54,6 +55,34 @@ struct MenuBarContent: View {
     /// The selected cloud provider id. Read fresh per rewrite by
     /// `CloudProvider.active()`, so switching takes effect on the next dictation.
     @AppStorage(CloudProvider.storageKey) private var selectedProvider = CloudProvider.claude.id
+
+    /// The configured dictation chord, as its single serialized string. Bound so
+    /// the keycaps (Settings + the Dictate hero) update reactively on a change;
+    /// the live tap is updated separately via `coordinator.updateHotkey()`.
+    @AppStorage(DictationShortcut.storageKey) private var shortcutStorage = DictationShortcut.default.storageString
+
+    /// Settings: capturing the next chord. While true, a local event monitor
+    /// intercepts key events; `shortcutMonitor` holds its token, `shortcutHint`
+    /// shows a transient validation message.
+    @State private var recordingShortcut = false
+    @State private var shortcutMonitor: Any?
+    @State private var shortcutHint: String?
+
+    /// The active chord, decoded from `shortcutStorage` (default on malformed).
+    /// Shared by `shortcutSettingRow` and the Dictate hero so they can't drift.
+    private var currentShortcut: DictationShortcut {
+        DictationShortcut(storageString: shortcutStorage) ?? .default
+    }
+
+    /// The chord's keycaps, shared by the Dictate hero and the Settings row so a
+    /// layout change can't drift between them (the reason `currentShortcut` is
+    /// shared in the first place).
+    @ViewBuilder
+    private func keycaps(for shortcut: DictationShortcut) -> some View {
+        ForEach(Array(shortcut.symbols.enumerated()), id: \.offset) { _, symbol in
+            Keycap(symbol)
+        }
+    }
 
     /// Measured height of the current scrollable body, capped at 444 (the design
     /// cap); a `.window` MenuBarExtra sizes to content, so the scroll area needs
@@ -203,7 +232,7 @@ struct MenuBarContent: View {
 
                 permissionGateRow(
                     title: "Accessibility",
-                    why: "Pastes transcribed text and detects the ⌃⌥Space hotkey.",
+                    why: "Pastes transcribed text and detects the dictation hotkey.",
                     status: permissions.accessibility
                 ) {
                     if permissions.accessibility != .granted {
@@ -542,7 +571,7 @@ struct MenuBarContent: View {
             } else {
                 HStack(spacing: 5) {
                     Text("Hold").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
-                    Keycap("⌃"); Keycap("⌥"); Keycap("Space")
+                    keycaps(for: currentShortcut)
                 }
             }
         case .recording:
@@ -1252,15 +1281,109 @@ struct MenuBarContent: View {
     }
 
     private var shortcutSettingRow: some View {
-        HStack {
-            Text("Dictation shortcut")
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
-            Spacer()
-            HStack(spacing: 5) { Keycap("⌃"); Keycap("⌥"); Keycap("Space") }
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("Dictation shortcut")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                Spacer()
+                if recordingShortcut {
+                    Text("Press a shortcut…")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.accent)
+                    Button("Cancel") { stopRecordingShortcut() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.55))
+                } else {
+                    HStack(spacing: 5) { keycaps(for: currentShortcut) }
+                    Button("Change") { startRecordingShortcut() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+
+            // Validation hint (e.g. a modifier-less press while recording).
+            if let hint = shortcutHint {
+                Text(hint)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.red.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Restore ⌃⌥Space. Only shown when the binding has drifted from it.
+            if !recordingShortcut && currentShortcut != .default {
+                Button("Reset to default") { resetShortcut() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 11)
+        // The local monitor must never outlive the row (e.g. closing Settings
+        // mid-record); also removed when recording stops.
+        .onDisappear { stopRecordingShortcut() }
+    }
+
+    /// Begin capturing the next chord with a local event monitor. Returning nil
+    /// from the monitor swallows the captured keys so they don't also act in the
+    /// app. A valid `.keyDown` saves and stops; bare Escape cancels; a press with
+    /// no modifier shows a hint and keeps recording.
+    private func startRecordingShortcut() {
+        shortcutHint = nil
+        recordingShortcut = true
+        // Disarm the global tap while recording. It's a session-level
+        // (`.cgSessionEventTap`, head-inserted) tap that sees keystrokes BEFORE
+        // this local monitor, so an overlapping chord — the current binding, or
+        // any superset of its main key — would otherwise engage a phantom
+        // dictation and consume the keyDown before the recorder ever saw it
+        // (also wedging the mic on if the main key is swapped mid-hold). Re-armed
+        // in stopRecordingShortcut() with the freshly-saved binding.
+        coordinator.stopHotkey()
+        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+            // Still assembling modifiers — the main key hasn't been pressed yet.
+            if event.type == .flagsChanged { return event }
+
+            let hasModifier = !event.modifierFlags
+                .intersection([.control, .option, .command, .shift]).isEmpty
+
+            // Bare Escape cancels without changing the binding.
+            if event.keyCode == UInt16(kVK_Escape) && !hasModifier {
+                stopRecordingShortcut()
+                return nil
+            }
+
+            if let shortcut = DictationShortcut(nsEvent: event) {
+                shortcutStorage = shortcut.storageString
+                stopRecordingShortcut()   // re-arms the tap, picking up the new binding
+                return nil
+            }
+
+            // Invalid (no modifier): hint and keep recording.
+            shortcutHint = "Use at least one modifier (⌃ ⌥ ⌘ ⇧)"
+            return nil
+        }
+    }
+
+    private func stopRecordingShortcut() {
+        if let monitor = shortcutMonitor {
+            NSEvent.removeMonitor(monitor)
+            shortcutMonitor = nil
+        }
+        let wasRecording = recordingShortcut
+        recordingShortcut = false
+        shortcutHint = nil
+        // Re-arm the global tap we disarmed in startRecordingShortcut(); start()
+        // reloads the (possibly just-changed) binding. Guarded so a plain
+        // Settings dismissal that never recorded doesn't needlessly re-arm.
+        if wasRecording { coordinator.startHotkey() }
+    }
+
+    private func resetShortcut() {
+        shortcutStorage = DictationShortcut.default.storageString
+        coordinator.updateHotkey()
     }
 
     private func saveAPIKey() {

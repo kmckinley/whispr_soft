@@ -1,14 +1,19 @@
 # WhisprSoft
 
-A menu-bar dictation app for macOS. Hold **⌃⌥Space** (Control-Option-Space) to
-dictate; release, and your speech is transcribed and pasted into whatever app is
-focused. Transcription runs **on-device** — your audio never leaves the Mac.
+A menu-bar dictation app for macOS. Hold the dictation shortcut (**⌃⌥Space** by
+default, rebindable) to dictate; release, and your speech is transcribed and
+pasted into whatever app is focused. Transcription runs **on-device** — your
+audio never leaves the Mac.
 
 ## What it does
 
-- **Hold-to-talk dictation.** Press and hold ⌃⌥Space, speak, and release. While
-  you hold the chord the app records; on release it transcribes and types the
-  result into the frontmost app.
+- **Hold-to-talk dictation.** Press and hold the shortcut (⌃⌥Space by default),
+  speak, and release. While you hold the chord the app records; on release it
+  transcribes and types the result into the frontmost app.
+- **Customizable shortcut.** Rebind the hold-to-talk chord in **Settings**: click
+  **Change** and press your new combination — at least one modifier (⌃ ⌥ ⌘ ⇧)
+  plus one regular key. It stays hold-to-talk; **Reset to default** restores
+  ⌃⌥Space. The new binding takes effect immediately and persists across launches.
 - **On-device transcription.** Speech is transcribed locally with
   [WhisperKit](https://github.com/argmaxinc/argmax-oss-swift). The Whisper model
   downloads automatically on first use (a few hundred MB), then runs offline.
@@ -64,7 +69,8 @@ Corrections) plus a Settings screen behind the gear.
 ![The Dictate tab](screenshots/dictate.png)
 
 The home screen and live status display. The hero shows the current pipeline
-state — *Ready to dictate* at idle (with the **⌃⌥Space** hold-to-talk hint),
+state — *Ready to dictate* at idle (with the hold-to-talk hint showing your
+current shortcut, **⌃⌥Space** by default),
 an animated waveform while recording, and a spinner while transcribing or
 cleaning up. The card below is the quick-access control panel: **Language** picks
 the output language — leave it on *English (United States)* for no translation,
@@ -111,9 +117,10 @@ casing you type. Add and remove rows inline.
 Behind the gear: the **Local mode** toggle (route cleanup to a local LM Studio
 instance instead of the cloud), the **Claude API key** and **ChatGPT API key**
 add/remove flows (each stored in the Keychain, shown here as Connected), the
-**Dictation shortcut** reference, Quit, and the app version. Add whichever cloud
-provider's key you plan to use; switch between them from the Dictate tab's Engine
-row.
+**Dictation shortcut** recorder (click **Change** to rebind the hold-to-talk
+chord — at least one modifier plus a key — or **Reset to default** for ⌃⌥Space),
+Quit, and the app version. Add whichever cloud provider's key you plan to use;
+switch between them from the Dictate tab's Engine row.
 
 At the bottom of Settings is a **Show logs** toggle that reveals a per-dictation
 diagnostic log. Each entry reports which engine and model ran, whether cleanup

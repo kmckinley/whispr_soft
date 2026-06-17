@@ -78,6 +78,12 @@ final class Coordinator {
 
     func stopHotkey() { hotkey.stop() }
 
+    /// Push a changed dictation shortcut to the live tap so a new binding takes
+    /// effect without a relaunch. The monitor caches the chord (it can't read
+    /// UserDefaults on the per-event hot path), so this explicit reload is how
+    /// the UI propagates a change.
+    func updateHotkey() { hotkey.reloadShortcut() }
+
     // MARK: - Model preload
 
     /// Warm the transcription model so the first dictation isn't blocked on a
