@@ -115,6 +115,16 @@ add/remove flows (each stored in the Keychain, shown here as Connected), the
 provider's key you plan to use; switch between them from the Dictate tab's Engine
 row.
 
+At the bottom of Settings is a **Show logs** toggle that reveals a per-dictation
+diagnostic log. Each entry reports which engine and model ran, whether cleanup
+fell back to the raw transcript (a red *raw fallback* tag), the per-stage timings
+(speech-to-text, cleanup, and total processing), the input→output character
+counts, where the text went (pasted or sent to the note), and the outcome
+(OK / no audio / error). Logs are **in-memory only**: they're always collected
+while the app runs, the toggle only controls whether they're shown, and they're
+cleared on quit — nothing is written to disk and entries never contain the
+transcript text itself.
+
 ## Privacy
 
 - **Audio is always transcribed locally and never leaves your Mac.**

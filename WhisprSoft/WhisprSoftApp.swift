@@ -18,7 +18,8 @@ struct WhisprSoftApp: App {
                            permissions: appDelegate.permissions,
                            corrections: appDelegate.corrections,
                            profiles: appDelegate.profiles,
-                           scratchpad: appDelegate.scratchpad)
+                           scratchpad: appDelegate.scratchpad,
+                           log: appDelegate.log)
         }
         .menuBarExtraStyle(.window)
     }
@@ -31,17 +32,21 @@ struct WhisprSoftApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let scratchpad: ScratchpadStore
+    let log: DictationLogStore
     let coordinator: Coordinator
     let permissions = PermissionsManager()
     let corrections = CorrectionsStore()
     let profiles = RewriteProfilesStore()
 
     override init() {
-        // Share one store between the Coordinator (writer) and the view
-        // (reader/editor). Use a local to avoid referencing self during init.
+        // Share the scratchpad and log stores between the Coordinator (writer)
+        // and the view (reader/editor). Use locals to avoid referencing self
+        // during init.
         let pad = ScratchpadStore()
+        let dictationLog = DictationLogStore()
         self.scratchpad = pad
-        self.coordinator = Coordinator(scratchpad: pad)
+        self.log = dictationLog
+        self.coordinator = Coordinator(scratchpad: pad, log: dictationLog)
         super.init()
     }
 

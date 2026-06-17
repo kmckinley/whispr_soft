@@ -23,6 +23,7 @@ struct MenuBarContent: View {
     @Bindable var corrections: CorrectionsStore
     @Bindable var profiles: RewriteProfilesStore
     @Bindable var scratchpad: ScratchpadStore
+    let log: DictationLogStore
 
     enum Tab: String, CaseIterable { case dictate = "Dictate", tone = "Tone", corrections = "Corrections" }
 
@@ -62,6 +63,10 @@ struct MenuBarContent: View {
     /// Route cleanup to the local LM Studio instead of cloud Claude. Read fresh
     /// per rewrite by RewriteLadder, so toggling takes effect immediately.
     @AppStorage("localMode") private var localMode = false
+
+    /// Reveal the per-dictation diagnostic log at the bottom of Settings. Logs
+    /// are always collected in memory; this only controls visibility.
+    @AppStorage("showLogs") private var showLogs = false
 
     /// The target output language id. Read fresh per rewrite by
     /// `TargetLanguage.active()`, so a change takes effect on the next dictation.
@@ -1037,6 +1042,8 @@ struct MenuBarContent: View {
             }
             .buttonStyle(.plain)
 
+            logsSection
+
             if let version = versionString {
                 Text("Version \(version)")
                     .font(.system(size: 10.5))
@@ -1067,6 +1074,127 @@ struct MenuBarContent: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 11)
+    }
+
+    // MARK: - Logs
+
+    /// The "Show logs" toggle and, when on, the per-dictation diagnostic list.
+    /// Logs are always collected in memory (see DictationLogStore); the toggle
+    /// only controls whether they're rendered here.
+    @ViewBuilder
+    private var logsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Show logs")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                    Text("Per-dictation diagnostics. Kept in memory only, cleared on quit.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                LocalToggle(isOn: $showLogs)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .groupedCardSurface()
+
+        if showLogs { logsList }
+    }
+
+    private var logsList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("\(log.entries.count) dictation\(log.entries.count == 1 ? "" : "s")")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5))
+                Spacer()
+                Button("Clear") { log.clear() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.accent)
+                    .disabled(log.entries.isEmpty)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            if log.entries.isEmpty {
+                Text("No dictations logged yet.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+            } else {
+                ForEach(log.entries) { entry in
+                    hairline
+                    logEntryRow(entry)
+                }
+            }
+        }
+        .groupedCardSurface()
+    }
+
+    private func logEntryRow(_ e: DictationLogEntry) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            // Line 1: time · engine (+ raw-fallback tag) · destination.
+            HStack(spacing: 6) {
+                Text(e.date, style: .time)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.8))
+                Text("·").foregroundStyle(.white.opacity(0.3))
+                Text(e.engine)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.6))
+                if e.usedRawFallback {
+                    Text("raw fallback")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(Theme.red)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.red.opacity(0.14)))
+                }
+                Spacer()
+                Text(e.destination)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+
+            // Line 2: model, or the status when it isn't a clean "OK".
+            if e.status == "OK" {
+                Text(e.model ?? "—")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            } else {
+                Text(e.status)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(e.status == "No audio" ? Theme.amber : Theme.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Line 3: per-stage timings and char delta.
+            HStack(spacing: 6) {
+                Text("STT \(fmt(e.transcriptionMs)) · cleanup \(fmt(e.rewriteMs)) · total \(fmt(e.totalMs))")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.4))
+                Spacer()
+                Text("\(e.inputChars)→\(e.outputChars) chars")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.35))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+    }
+
+    /// Compact duration: "850ms" under a second, one-decimal seconds above.
+    private func fmt(_ ms: Int) -> String {
+        ms < 1000 ? "\(ms)ms" : String(format: "%.1fs", Double(ms) / 1000)
     }
 
     /// A reusable API-key settings row: connected dot + "Connected" + Remove, or

@@ -25,9 +25,16 @@ nonisolated struct RewriteLadder: Rewriter {
     let openai: Rewriter
     let local: Rewriter
 
-    func rewrite(_ text: String) async throws -> String {
-        guard !text.isEmpty else { return text }
+    func rewrite(_ text: String) async throws -> RewriteResult {
         let localMode = UserDefaults.standard.bool(forKey: "localMode")
+        // The engine the user *intended* this run to use, independent of whether
+        // it succeeded — so the dictation log shows "Claude (raw fallback)"
+        // rather than a bare "—" when the backend fails.
+        let intendedEngine = localMode ? "LM Studio" : CloudProvider.active().displayName
+
+        guard !text.isEmpty else {
+            return RewriteResult(text: text, engine: intendedEngine, model: nil, usedRawFallback: false)
+        }
 
         // Pick the primary backend. Both the localMode flag and the cloud
         // provider are read fresh per call so switching either takes effect on
@@ -49,7 +56,7 @@ nonisolated struct RewriteLadder: Rewriter {
             // we always paste something. Crucially, we fall back to raw, never
             // to the *other* backend: Local Mode stays local-only.
             Log.rewrite.error("\(label, privacy: .public) rewrite failed, using raw: \(error.localizedDescription, privacy: .public)")
-            return text
+            return RewriteResult(text: text, engine: intendedEngine, model: nil, usedRawFallback: true)
         }
     }
 }

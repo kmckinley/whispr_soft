@@ -24,8 +24,10 @@ nonisolated struct OpenAIRewriter: Rewriter {
     private static let model = "gpt-4.1-mini"
     private static let timeout: TimeInterval = 60   // matches the cloud Claude path
 
-    func rewrite(_ text: String) async throws -> String {
-        guard !text.isEmpty else { return text }
+    func rewrite(_ text: String) async throws -> RewriteResult {
+        guard !text.isEmpty else {
+            return RewriteResult(text: text, engine: "ChatGPT", model: Self.model, usedRawFallback: false)
+        }
 
         // Resolve auth fresh each call so a key entered/changed in Settings
         // applies immediately, without relaunch. The key is never logged.
@@ -89,7 +91,7 @@ nonisolated struct OpenAIRewriter: Rewriter {
         // translating so the default path's log line matches the cloud line.
         let languageSuffix = language.translates ? " -> \(language.id)" : ""
         Log.rewrite.notice("Rewriter: openai [\(profile?.name ?? "default", privacy: .public)] cleaned \(text.count, privacy: .public) -> \(cleaned.count, privacy: .public) chars\(languageSuffix, privacy: .public)")
-        return cleaned
+        return RewriteResult(text: cleaned, engine: "ChatGPT", model: Self.model, usedRawFallback: false)
     }
 
     // MARK: - Wire types

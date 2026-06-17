@@ -26,6 +26,8 @@ nonisolated struct RewriterConfig {
     /// Per-request timeout. Bounds the dictation hot path: a hung backend falls
     /// back to raw within this window instead of the 60s URLSession default.
     let timeout: TimeInterval
+    /// User-facing engine name for the dictation log ("Claude"/"LM Studio").
+    let displayName: String
 
     /// Label for diagnostics ("cloud"/"local").
     var label: String { usesKeychainKey ? "cloud" : "local" }
@@ -35,7 +37,8 @@ nonisolated struct RewriterConfig {
         model: "claude-haiku-4-5-20251001",
         usesKeychainKey: true,
         modelsEndpoint: nil,
-        timeout: 60   // proven default; cloud is reliable, leave headroom
+        timeout: 60,   // proven default; cloud is reliable, leave headroom
+        displayName: "Claude"
     )
 
     // LM Studio speaks the Anthropic Messages shape at this loopback address.
@@ -46,7 +49,8 @@ nonisolated struct RewriterConfig {
         model: nil,
         usesKeychainKey: false,
         modelsEndpoint: URL(string: "http://127.0.0.1:1234/v1/models")!,
-        timeout: 20   // tight bound so a stuck LM Studio doesn't freeze dictation
+        timeout: 20,   // tight bound so a stuck LM Studio doesn't freeze dictation
+        displayName: "LM Studio"
     )
 }
 
@@ -56,8 +60,10 @@ nonisolated struct RewriterConfig {
 nonisolated struct HTTPRewriter: Rewriter {
     let config: RewriterConfig
 
-    func rewrite(_ text: String) async throws -> String {
-        guard !text.isEmpty else { return text }
+    func rewrite(_ text: String) async throws -> RewriteResult {
+        guard !text.isEmpty else {
+            return RewriteResult(text: text, engine: config.displayName, model: config.model, usedRawFallback: false)
+        }
 
         // Resolve auth. Cloud reads the key fresh each call so a key
         // entered/changed in the menu applies immediately, without relaunch.
@@ -133,7 +139,7 @@ nonisolated struct HTTPRewriter: Rewriter {
         // translating so the default path's log line is unchanged.
         let languageSuffix = language.translates ? " -> \(language.id)" : ""
         Log.rewrite.notice("Rewriter: \(config.label, privacy: .public) [\(profile?.name ?? "default", privacy: .public)] cleaned \(text.count, privacy: .public) -> \(cleaned.count, privacy: .public) chars\(languageSuffix, privacy: .public)")
-        return cleaned
+        return RewriteResult(text: cleaned, engine: config.displayName, model: model, usedRawFallback: false)
     }
 
     // MARK: - Model resolution

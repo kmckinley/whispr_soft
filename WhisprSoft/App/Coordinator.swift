@@ -27,10 +27,16 @@ final class Coordinator {
     private let rewriter: Rewriter
     private let injector: TextInjector
     private let scratchpad: ScratchpadStore
+    private let log: DictationLogStore
 
     /// Snapshotted in beginDictation() from whether the popover is open; honored
     /// for the whole run even if the popover is closed before release.
     private var routingToNote = false
+
+    /// When the current recording began (set in beginDictation). Used to report
+    /// the hold duration in the dictation log; only meaningful on the success
+    /// path that runs through endDictation().
+    private var recordStart: Date?
 
     /// The global hold-to-talk hotkey. The Coordinator owns it and wires its
     /// callbacks to begin/end dictation; arm it with startHotkey().
@@ -45,13 +51,15 @@ final class Coordinator {
             local: HTTPRewriter(config: .local)
         ),
         injector: TextInjector = PasteboardInjector(),
-        scratchpad: ScratchpadStore = ScratchpadStore()
+        scratchpad: ScratchpadStore = ScratchpadStore(),
+        log: DictationLogStore = DictationLogStore()
     ) {
         self.recorder = recorder
         self.transcriber = transcriber
         self.rewriter = rewriter
         self.injector = injector
         self.scratchpad = scratchpad
+        self.log = log
     }
 
     // MARK: - Hotkey
@@ -101,6 +109,7 @@ final class Coordinator {
         routingToNote = scratchpad.isPopoverOpen
 
         state = .recording
+        recordStart = Date()
         if routingToNote { scratchpad.beginCapture() }
         do {
             try recorder.start()
@@ -126,22 +135,47 @@ final class Coordinator {
         // invariant.
         state = .transcribing
 
+        // Timing/diagnostic accumulators for the dictation log. `processingStart`
+        // is the instant the user released (right before stop()); totalMs is
+        // measured from here, so it excludes the hold itself (that's recordMs).
+        // The per-stage spans and char counts are filled as the run progresses
+        // so the catch/no-audio paths can still report whatever is known.
+        let processingStart = Date()
+        let recordMs = recordStart.map { Int(processingStart.timeIntervalSince($0) * 1000) } ?? 0
+        let destinationLabel = routingToNote ? "Note" : "Pasted"
+        var transcriptionMs = 0
+        var rewriteMs = 0
+        var inputChars = 0
+        var outputChars = 0
+        var result: RewriteResult?
+
         do {
             let audio = await recorder.stop()
             guard !audio.samples.isEmpty else {
                 Log.pipeline.error("No audio captured")
+                log.record(DictationLogEntry(
+                    date: Date(), engine: "—", model: nil, usedRawFallback: false,
+                    destination: "—", recordMs: recordMs, transcriptionMs: 0,
+                    rewriteMs: 0, totalMs: Int(Date().timeIntervalSince(processingStart) * 1000),
+                    inputChars: 0, outputChars: 0, status: "No audio"))
                 recoverFromError(PipelineError.noAudioCaptured)
                 return
             }
 
             let transcript = try await transcriber.transcribe(audio)
+            transcriptionMs = Int(Date().timeIntervalSince(processingStart) * 1000)
+            inputChars = transcript.count
 
             state = .rewriting
-            let rewritten = try await rewriter.rewrite(transcript)
+            let rewriteStart = Date()
+            let rr = try await rewriter.rewrite(transcript)
+            result = rr
+            rewriteMs = Int(Date().timeIntervalSince(rewriteStart) * 1000)
 
             // Final deterministic pass: fix known mishearings/misspellings the
             // rewrite (or Whisper) may have left, before the text is injected.
-            let corrected = KeywordCorrector.correct(rewritten)
+            let corrected = KeywordCorrector.correct(rr.text)
+            outputChars = corrected.count
 
             if routingToNote {
                 // Deliver to the in-popover note — never touch the pasteboard
@@ -155,8 +189,24 @@ final class Coordinator {
                 try injector.inject(corrected)
                 state = .idle
             }
+
+            log.record(DictationLogEntry(
+                date: Date(), engine: rr.engine, model: rr.model,
+                usedRawFallback: rr.usedRawFallback, destination: destinationLabel,
+                recordMs: recordMs, transcriptionMs: transcriptionMs, rewriteMs: rewriteMs,
+                totalMs: Int(Date().timeIntervalSince(processingStart) * 1000),
+                inputChars: inputChars, outputChars: outputChars, status: "OK"))
         } catch {
             Log.pipeline.error("Pipeline error: \(error.localizedDescription, privacy: .public)")
+            // The run failed before delivery, so report "—" for destination — the
+            // intended target (Pasted/Note) would falsely imply the text landed.
+            log.record(DictationLogEntry(
+                date: Date(), engine: result?.engine ?? "—", model: result?.model,
+                usedRawFallback: result?.usedRawFallback ?? false, destination: "—",
+                recordMs: recordMs, transcriptionMs: transcriptionMs, rewriteMs: rewriteMs,
+                totalMs: Int(Date().timeIntervalSince(processingStart) * 1000),
+                inputChars: inputChars, outputChars: outputChars,
+                status: "Error: \(error.localizedDescription)"))
             recoverFromError(error)
         }
     }
