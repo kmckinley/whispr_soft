@@ -23,6 +23,7 @@ struct MenuBarContent: View {
     let permissions: PermissionsManager
     @Bindable var corrections: CorrectionsStore
     @Bindable var profiles: RewriteProfilesStore
+    @Bindable var toneChords: ToneChordStore
     @Bindable var scratchpad: ScratchpadStore
     let log: DictationLogStore
 
@@ -67,6 +68,14 @@ struct MenuBarContent: View {
     @State private var recordingShortcut = false
     @State private var shortcutMonitor: Any?
     @State private var shortcutHint: String?
+
+    /// Settings: capturing a tone-chord key. `recordingChordIndex` is the slot
+    /// being recorded (nil = none), `chordMonitor` holds the local event monitor,
+    /// `chordHint` shows a transient validation/collision message. Mirrors the
+    /// default-shortcut recorder, but accepts ONLY ⌃⌥ + a single key.
+    @State private var recordingChordIndex: Int?
+    @State private var chordMonitor: Any?
+    @State private var chordHint: String?
 
     /// The active chord, decoded from `shortcutStorage` (default on malformed).
     /// Shared by `shortcutSettingRow` and the Dictate hero so they can't drift.
@@ -153,7 +162,17 @@ struct MenuBarContent: View {
         }
         .onAppear { refreshKeyStatus() }
         .onChange(of: corrections.items) { _, _ in corrections.save() }
-        .onChange(of: profiles.items) { _, _ in profiles.save() }
+        .onChange(of: profiles.items) { old, new in
+            profiles.save()
+            // Refresh the monitor's cached tone chords only when the set of
+            // profiles changes (a deletion can orphan a chord — its key must type
+            // normally again). A rename/instruction edit doesn't affect chord
+            // resolution (it's by id, and the HUD name is read fresh at press), so
+            // skip the reload on those to keep edits off the tap's cache path.
+            if Set(old.map(\.id)) != Set(new.map(\.id)) {
+                coordinator.updateHotkey()
+            }
+        }
         .onChange(of: profiles.selectedID) { _, _ in profiles.saveSelection() }
         // When a capture starts routing to the note, surface it: leave Settings
         // and snap to the Dictate tab so the box is visible. Keyed on
@@ -580,7 +599,14 @@ struct MenuBarContent: View {
                 }
             }
         case .recording:
-            heroSub("Release to finish")
+            // For a tone-chord dictation, name the one-shot tone in the indicator
+            // (the only on-screen indicator; invisible when the popover is closed,
+            // the common dictate-into-another-app case — a pre-existing limit).
+            if let tone = coordinator.activeToneName {
+                heroSub("\(tone) · Release to finish")
+            } else {
+                heroSub("Release to finish")
+            }
         case .transcribing, .rewriting, .injecting:
             heroSub("Polishing with \(engineName)")
         case .error(let message):
@@ -1064,6 +1090,8 @@ struct MenuBarContent: View {
             }
             .groupedCardSurface()
 
+            toneChordsSection
+
             Button { NSApplication.shared.terminate(nil) } label: {
                 Text("Quit WhisprSoft")
                     .font(.system(size: 12.5, weight: .medium))
@@ -1379,6 +1407,10 @@ struct MenuBarContent: View {
     /// app. A valid `.keyDown` saves and stops; bare Escape cancels; a press with
     /// no modifier shows a hint and keeps recording.
     private func startRecordingShortcut() {
+        // Never let both recorders run at once: two local monitors would process
+        // the same press on stale state and could double-save (default + a tone
+        // slot on the same key), bypassing the collision checks that run serially.
+        stopRecordingChord()
         shortcutHint = nil
         recordingShortcut = true
         // Disarm the global tap while recording. It's a session-level
@@ -1403,6 +1435,14 @@ struct MenuBarContent: View {
             }
 
             if let shortcut = DictationShortcut(nsEvent: event) {
+                // Reciprocate the tone-chord collision check (chordConflict): the
+                // default chord and every tone chord must have unique keyCodes, or
+                // HotkeyMonitor.matchChord (default-first) silently shadows the
+                // tone chord. Reject here so the invariant holds from both sides.
+                if toneChords.slots.contains(where: { $0.keyCode == shortcut.keyCode }) {
+                    shortcutHint = "That key is used by a tone shortcut."
+                    return nil   // keep recording
+                }
                 shortcutStorage = shortcut.storageString
                 stopRecordingShortcut()   // re-arms the tap, picking up the new binding
                 return nil
@@ -1429,8 +1469,226 @@ struct MenuBarContent: View {
     }
 
     private func resetShortcut() {
+        let defaultKeyCode = DictationShortcut.default.keyCode
+        // Preserve keyCode-uniqueness: if a tone chord sits on the default's key,
+        // the restored default would shadow it (HotkeyMonitor.matchChord is
+        // default-first), so clear that tone chord's key to keep state honest —
+        // it's visibly unassigned in the rows below rather than silently dead.
+        var cleared = false
+        for i in toneChords.slots.indices where toneChords.slots[i].keyCode == defaultKeyCode {
+            toneChords.slots[i].keyCode = nil
+            cleared = true
+        }
+        if cleared { toneChords.save() }
         shortcutStorage = DictationShortcut.default.storageString
         coordinator.updateHotkey()
+    }
+
+    // MARK: - Tone shortcuts (one-shot tone chords)
+
+    /// Up to three ⌃⌥-only chords that each dictate once in a specific tone,
+    /// without changing the active tone. Each row picks a tone and captures a key.
+    private var toneChordsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Tone shortcuts")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text("Hold ⌃⌥ + a key to dictate once in a chosen tone — your active tone stays put.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 2)
+
+            VStack(spacing: 0) {
+                ForEach(0..<ToneChordStore.slotCount, id: \.self) { i in
+                    if i > 0 { hairline }
+                    toneChordRow(i)
+                }
+            }
+            .groupedCardSurface()
+        }
+        // The local monitor must never outlive the view (e.g. closing Settings
+        // mid-capture); also removed when capture finishes.
+        .onDisappear { stopRecordingChord() }
+    }
+
+    private func toneChordRow(_ index: Int) -> some View {
+        let slot = toneChords.slots[index]
+        let isRecording = recordingChordIndex == index
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                // Tone selection. A native Menu keeps this row compact; "None"
+                // clears the tone reference (leaving the key, if any).
+                Menu {
+                    Button("None") { setSlotTone(index, nil) }
+                    ForEach(profiles.items) { profile in
+                        Button(profile.name.isEmpty ? "Untitled" : profile.name) {
+                            setSlotTone(index, profile.id)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(slotToneLabel(slot))
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(slotToneIsSet(slot) ? .white.opacity(0.9) : .white.opacity(0.4))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: 120, alignment: .leading)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+
+                Spacer(minLength: 6)
+
+                if isRecording {
+                    Text("Press ⌃⌥ + a key…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.accent)
+                    Button("Cancel") { stopRecordingChord() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.55))
+                } else {
+                    if let keyCode = slot.keyCode {
+                        HStack(spacing: 5) {
+                            Keycap("⌃"); Keycap("⌥")
+                            Keycap(DictationShortcut.keyName(for: keyCode))
+                        }
+                    }
+                    Button(slot.keyCode == nil ? "Set key" : "Change") {
+                        startRecordingChord(index)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+
+                    if slot.toneID != nil || slot.keyCode != nil {
+                        Button { clearSlot(index) } label: {
+                            Image(systemName: "minus.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.white.opacity(0.3))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            if isRecording, let hint = chordHint {
+                Text(hint)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.red.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    /// True only when the slot references a tone that still exists.
+    private func slotToneIsSet(_ slot: ToneChordSlot) -> Bool {
+        guard let id = slot.toneID else { return false }
+        return profiles.items.contains { $0.id == id }
+    }
+
+    /// The slot's tone label: the tone name, "Choose tone" when unset, or
+    /// "Deleted tone" when its tone was removed (reflecting the no-op state).
+    private func slotToneLabel(_ slot: ToneChordSlot) -> String {
+        guard let id = slot.toneID else { return "Choose tone" }
+        guard let profile = profiles.items.first(where: { $0.id == id }) else { return "Deleted tone" }
+        return profile.name.isEmpty ? "Untitled" : profile.name
+    }
+
+    private func setSlotTone(_ index: Int, _ id: UUID?) {
+        toneChords.slots[index].toneID = id
+        toneChords.save()
+        coordinator.updateHotkey()
+    }
+
+    private func clearSlot(_ index: Int) {
+        toneChords.slots[index] = .empty
+        toneChords.save()
+        coordinator.updateHotkey()
+    }
+
+    /// Begin capturing a ⌃⌥-only chord key for `index`. Like the default-shortcut
+    /// recorder, this disarms the global tap so an overlapping chord can't engage
+    /// a phantom dictation, then a local monitor captures the next key — accepting
+    /// ONLY Control+Option + a single key, and rejecting collisions.
+    private func startRecordingChord(_ index: Int) {
+        // Mutually exclusive with the default-shortcut recorder (see
+        // startRecordingShortcut): only one capture session may be live.
+        stopRecordingShortcut()
+        chordHint = nil
+        recordingChordIndex = index
+        coordinator.stopHotkey()
+        chordMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+            // Still assembling modifiers — the key hasn't been pressed yet.
+            if event.type == .flagsChanged { return event }
+
+            let mods = event.modifierFlags.intersection([.control, .option, .command, .shift])
+
+            // Bare Escape cancels without changing the slot.
+            if event.keyCode == UInt16(kVK_Escape) && mods.isEmpty {
+                stopRecordingChord()
+                return nil
+            }
+
+            // Require EXACTLY Control+Option (the fixed tone-chord modifier set) —
+            // stricter than the default recorder, which allows any ≥1-modifier combo.
+            guard mods == [.control, .option] else {
+                chordHint = "Use exactly ⌃⌥ + a key"
+                return nil
+            }
+
+            let keyCode = Int64(event.keyCode)
+            // Collision: keyCode must be unique across the default chord and the
+            // other tone slots, so the tap can disambiguate the press.
+            if let conflict = chordConflict(keyCode: keyCode, excluding: index) {
+                chordHint = conflict
+                return nil
+            }
+
+            toneChords.slots[index].keyCode = keyCode
+            toneChords.save()
+            coordinator.updateHotkey()
+            stopRecordingChord()   // re-arms the tap with the new binding
+            return nil
+        }
+    }
+
+    private func stopRecordingChord() {
+        if let monitor = chordMonitor {
+            NSEvent.removeMonitor(monitor)
+            chordMonitor = nil
+        }
+        let wasRecording = recordingChordIndex != nil
+        recordingChordIndex = nil
+        chordHint = nil
+        // Re-arm the global tap disarmed in startRecordingChord(); start() reloads
+        // the (possibly just-changed) bindings. Guarded so a plain disappear that
+        // never recorded doesn't needlessly re-arm.
+        if wasRecording { coordinator.startHotkey() }
+    }
+
+    /// A collision message if `keyCode` clashes with the default dictation chord
+    /// or another tone slot, else nil. keyCode-level (conservative): it blocks a
+    /// few technically-unambiguous combos, but guarantees the tap never co-fires.
+    private func chordConflict(keyCode: Int64, excluding index: Int) -> String? {
+        if currentShortcut.keyCode == keyCode {
+            return "That key is the dictation shortcut."
+        }
+        for (i, slot) in toneChords.slots.enumerated() where i != index {
+            if slot.keyCode == keyCode {
+                return "That key is used by another tone shortcut."
+            }
+        }
+        return nil
     }
 
     private func saveAPIKey() {

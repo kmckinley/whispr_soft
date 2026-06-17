@@ -60,7 +60,7 @@ nonisolated struct RewriterConfig {
 nonisolated struct HTTPRewriter: Rewriter {
     let config: RewriterConfig
 
-    func rewrite(_ text: String) async throws -> RewriteResult {
+    func rewrite(_ text: String, tone: ToneSelection) async throws -> RewriteResult {
         guard !text.isEmpty else {
             return RewriteResult(text: text, engine: config.displayName, model: config.model, usedRawFallback: false)
         }
@@ -82,10 +82,16 @@ nonisolated struct HTTPRewriter: Rewriter {
         // local /v1/models list. An empty/unreachable list throws → raw fallback.
         let model = try await resolveModel()
 
-        // Resolve the active tone profile fresh per call (read-fresh pattern), so
-        // selecting/editing a profile in the menu applies on the next dictation.
-        // Applying it here means cloud and local both get it — no ladder change.
-        let profile = RewriteProfilesStore.active()
+        // Resolve the tone profile. `.active` reads the persisted selection fresh
+        // per call (read-fresh pattern), so selecting/editing a profile applies on
+        // the next dictation. `.override` forces a tone-chord's tone for this one
+        // run without touching the selection. Applying it here means cloud and
+        // local both get it — no ladder change.
+        let profile: RewriteProfilesStore.ActiveRewriteProfile?
+        switch tone {
+        case .active:               profile = RewriteProfilesStore.active()
+        case .override(let forced): profile = forced
+        }
 
         // Resolve the target language fresh per call too (read-fresh pattern).
         // Default (English US) means no translation — `systemPrompt` returns

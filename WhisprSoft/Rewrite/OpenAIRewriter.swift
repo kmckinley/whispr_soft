@@ -24,7 +24,7 @@ nonisolated struct OpenAIRewriter: Rewriter {
     private static let model = "gpt-4.1-mini"
     private static let timeout: TimeInterval = 60   // matches the cloud Claude path
 
-    func rewrite(_ text: String) async throws -> RewriteResult {
+    func rewrite(_ text: String, tone: ToneSelection) async throws -> RewriteResult {
         guard !text.isEmpty else {
             return RewriteResult(text: text, engine: "ChatGPT", model: Self.model, usedRawFallback: false)
         }
@@ -35,11 +35,16 @@ nonisolated struct OpenAIRewriter: Rewriter {
             throw RewriterError.noOpenAIKey
         }
 
-        // Resolve the active tone profile and target language fresh per call
-        // (read-fresh pattern), so selecting/editing them applies on the next
-        // dictation. Both feed the shared prompt builder, so the cloud backends
-        // stay in lockstep.
-        let profile = RewriteProfilesStore.active()
+        // Resolve the tone profile (`.active` = persisted selection read fresh;
+        // `.override` = a tone-chord's one-run tone) and the target language fresh
+        // per call (read-fresh pattern), so selecting/editing them applies on the
+        // next dictation. Both feed the shared prompt builder, so the cloud
+        // backends stay in lockstep.
+        let profile: RewriteProfilesStore.ActiveRewriteProfile?
+        switch tone {
+        case .active:               profile = RewriteProfilesStore.active()
+        case .override(let forced): profile = forced
+        }
         let language = TargetLanguage.active()
 
         var request = URLRequest(url: Self.endpoint, timeoutInterval: Self.timeout)

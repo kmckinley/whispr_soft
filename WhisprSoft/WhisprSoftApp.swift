@@ -18,6 +18,7 @@ struct WhisprSoftApp: App {
                            permissions: appDelegate.permissions,
                            corrections: appDelegate.corrections,
                            profiles: appDelegate.profiles,
+                           toneChords: appDelegate.toneChords,
                            scratchpad: appDelegate.scratchpad,
                            log: appDelegate.log)
         }
@@ -37,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let permissions = PermissionsManager()
     let corrections = CorrectionsStore()
     let profiles = RewriteProfilesStore()
+    let toneChords = ToneChordStore()
 
     override init() {
         // Share the scratchpad and log stores between the Coordinator (writer)

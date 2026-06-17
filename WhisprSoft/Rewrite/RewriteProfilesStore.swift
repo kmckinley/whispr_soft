@@ -136,15 +136,39 @@ final class RewriteProfilesStore {
     /// after trimming. Returns nil for: no selection, selection not found
     /// (deleted), or blank instruction — all of which mean plain cleanup.
     nonisolated static func active() -> ActiveRewriteProfile? {
-        guard let id = loadSelectedID(),
-              let data = UserDefaults.standard.data(forKey: storageKey),
-              let items = try? JSONDecoder().decode([RewriteProfile].self, from: data),
-              let profile = items.first(where: { $0.id == id })
-        else { return nil }
+        guard let id = loadSelectedID(), let profile = storedProfile(id: id) else { return nil }
 
         let instruction = profile.instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !instruction.isEmpty else { return nil }
 
         return ActiveRewriteProfile(name: profile.name, instruction: instruction)
+    }
+
+    /// Decode `storageKey` fresh and return the profile with `id`, or nil. Shared
+    /// decode+find for `active()` and `resolveOverride(id:)` so the two can't drift.
+    nonisolated private static func storedProfile(id: UUID) -> RewriteProfile? {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let items = try? JSONDecoder().decode([RewriteProfile].self, from: data)
+        else { return nil }
+        return items.first { $0.id == id }
+    }
+
+    /// Resolve a tone-chord binding's tone id for a ONE-SHOT override. Reads
+    /// `storageKey` fresh (read-fresh pattern). Returns nil when no profile with
+    /// `id` exists — the tone was deleted, so the caller treats the slot as
+    /// unassigned (no-op). When it exists, `name` is its display label (for the
+    /// recording indicator) and `profile` is the rewrite override: nil when the
+    /// instruction is blank (force plain cleanup, mirroring `active()`'s non-blank
+    /// invariant), otherwise the profile. Distinct from `active()`: this keeps the
+    /// name even for a blank-instruction tone, and never consults the persisted
+    /// selection.
+    nonisolated static func resolveOverride(id: UUID) -> (name: String, profile: ActiveRewriteProfile?)? {
+        guard let profile = storedProfile(id: id) else { return nil }
+
+        let instruction = profile.instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        let override = instruction.isEmpty
+            ? nil
+            : ActiveRewriteProfile(name: profile.name, instruction: instruction)
+        return (profile.name, override)
     }
 }

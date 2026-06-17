@@ -34,14 +34,27 @@ struct RewriteResult: Sendable {
     var usedProviderFallback: Bool = false
 }
 
-/// Cleans up / reformats transcribed text before injection.
+/// Which tone a single rewrite should apply. `.active` reads the persisted tone
+/// selection fresh per call (normal dictation). `.override` forces a specific
+/// tone for ONE run — a tone-chord dictation — without touching the persisted
+/// selection; its associated value is nil when the forced tone resolves to plain
+/// cleanup (a blank instruction), mirroring `RewriteProfilesStore.active()`'s
+/// non-blank invariant.
+enum ToneSelection: Sendable {
+    case active
+    case override(RewriteProfilesStore.ActiveRewriteProfile?)
+}
+
+/// Cleans up / reformats transcribed text before injection. `tone` is `.active`
+/// for a normal dictation (the persisted tone selection, read fresh) or
+/// `.override` for a one-shot tone-chord dictation.
 protocol Rewriter {
-    func rewrite(_ text: String) async throws -> RewriteResult
+    func rewrite(_ text: String, tone: ToneSelection) async throws -> RewriteResult
 }
 
 /// Appends a visible suffix so the rewrite step is observable.
 nonisolated struct StubRewriter: Rewriter {
-    func rewrite(_ text: String) async throws -> RewriteResult {
+    func rewrite(_ text: String, tone: ToneSelection) async throws -> RewriteResult {
         try await Task.sleep(for: .milliseconds(300))
         return RewriteResult(text: text + " [rewritten]", engine: "Stub", model: nil, usedRawFallback: false)
     }

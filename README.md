@@ -39,6 +39,14 @@ audio never leaves the Mac.
   **Default** leaves the cleanup unchanged. The active profile applies to both
   Cloud and Local cleanup, and changes take effect on the next dictation. Manage
   profiles on the **Tone** tab; choose the active one on the **Dictate** tab.
+- **Tone shortcuts.** Assign up to **three** extra hold-to-talk chords that each
+  dictate *once* in a specific tone — handy for switching to "Professional" for a
+  single message without changing your active tone. Each is **⌃⌥ + a key** of your
+  choosing, set in **Settings** (pick a tone, capture a key, or clear the slot);
+  all three start empty. Holding one records exactly like the normal shortcut, but
+  that one dictation uses the slot's tone and then everything reverts — your active
+  tone is never touched. The recording indicator names the tone in use. If the
+  bound tone is deleted, the slot quietly does nothing.
 - **Target language.** Pick an output language from a fixed list of ~20 major
   languages. When you choose a non-default language, the cleaned-up text is
   translated into it before it's pasted — so you can speak English and paste
@@ -126,7 +134,11 @@ try the other one before the raw transcript — only enabled once *both* the Cla
 and ChatGPT keys are set; if you later remove a key it disables again), the
 **Dictation shortcut** recorder (click **Change** to rebind the hold-to-talk
 chord — at least one modifier plus a key — or **Reset to default** for ⌃⌥Space),
-Quit, and the app version. Add whichever cloud provider's key you plan to use;
+and a **Tone shortcuts** section with three slots — each pairs a tone with a
+**⌃⌥ + key** chord (the recorder accepts only that combination) for a one-shot
+tone dictation, and can be cleared back to unassigned. A chord that collides with
+the dictation shortcut or another slot is rejected with an inline hint. Below that
+are Quit and the app version. Add whichever cloud provider's key you plan to use;
 switch between them from the Dictate tab's Engine row.
 
 At the bottom of Settings is a **Show logs** toggle that reveals a per-dictation

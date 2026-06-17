@@ -22,6 +22,11 @@ final class Coordinator {
     /// it). The UI observes this to show a "preparing" hint.
     private(set) var isModelLoading = false
 
+    /// The display name of the tone forced by a tone-chord dictation, surfaced in
+    /// the recording indicator. nil for a normal (default-chord) dictation. Only
+    /// meaningful while `.recording`; cleared once the run leaves that state.
+    private(set) var activeToneName: String?
+
     private let recorder: AudioRecording
     private let transcriber: Transcriber
     private let rewriter: Rewriter
@@ -32,6 +37,13 @@ final class Coordinator {
     /// Snapshotted in beginDictation() from whether the popover is open; honored
     /// for the whole run even if the popover is closed before release.
     private var routingToNote = false
+
+    /// The tone to apply to the current run, snapshotted in beginDictation() and
+    /// read once by endDictation(). `.active` for a normal dictation; `.override`
+    /// for a tone-chord dictation (a one-shot tone that never touches the persisted
+    /// selection). Every beginDictation() overwrites it, so a stale value can't
+    /// leak into a later run.
+    private var toneSelection: ToneSelection = .active
 
     /// When the current recording began (set in beginDictation). Used to report
     /// the hold duration in the dictation log; only meaningful on the success
@@ -69,7 +81,7 @@ final class Coordinator {
     /// is async so it's dispatched on a Task. `[weak self]` breaks the retain
     /// cycle: the Coordinator owns the monitor, whose closures capture it.
     func startHotkey() {
-        hotkey.onChordDown = { [weak self] in self?.beginDictation() }
+        hotkey.onChordDown = { [weak self] toneID in self?.beginDictation(toneID: toneID) }
         hotkey.onChordUp   = { [weak self] in
             Task { @MainActor in await self?.endDictation() }
         }
@@ -104,10 +116,25 @@ final class Coordinator {
     /// chord-up fires: engine start (~100ms) is well under the event-tap
     /// timeout, and finishing here means state is reliably `.recording` by
     /// the time endDictation() runs — no begin/end race.
-    func beginDictation() {
+    func beginDictation(toneID: UUID? = nil) {
         // Authoritative re-entrancy guard: refuse to start while a run is in
-        // flight (a stuck modifier or repeated chord could re-enter).
+        // flight (a stuck modifier or repeated chord could re-enter). A tone-chord
+        // press while busy is ignored here, exactly like a default-chord press.
         guard state == .idle else { return }
+
+        // Resolve a one-shot tone override for a tone-chord press. A deleted tone
+        // makes the slot behave as unassigned: no-op (don't start), per the spec.
+        // A normal dictation (toneID == nil) keeps `.active` (persisted selection).
+        var selection: ToneSelection = .active
+        var toneName: String?
+        if let toneID {
+            guard let resolved = RewriteProfilesStore.resolveOverride(id: toneID) else {
+                Log.pipeline.notice("Tone chord pressed but its tone was deleted — ignoring")
+                return
+            }
+            selection = .override(resolved.profile)
+            toneName = resolved.name
+        }
 
         // Snapshot the routing decision: if the popover is open at begin, the
         // cleaned text goes to the note instead of the frontmost app. Honored
@@ -116,6 +143,8 @@ final class Coordinator {
 
         state = .recording
         recordStart = Date()
+        toneSelection = selection
+        activeToneName = toneName
         if routingToNote { scratchpad.beginCapture() }
         do {
             try recorder.start()
@@ -140,6 +169,9 @@ final class Coordinator {
         // breaking AudioRecorder's documented start()/stop()-never-overlap
         // invariant.
         state = .transcribing
+        // The recording indicator (and its tone label) is done once we leave
+        // `.recording`; clear the label so a chord run's tone never lingers.
+        activeToneName = nil
 
         // Timing/diagnostic accumulators for the dictation log. `processingStart`
         // is the instant the user released (right before stop()); totalMs is
@@ -174,7 +206,7 @@ final class Coordinator {
 
             state = .rewriting
             let rewriteStart = Date()
-            let rr = try await rewriter.rewrite(transcript)
+            let rr = try await rewriter.rewrite(transcript, tone: toneSelection)
             result = rr
             rewriteMs = Int(Date().timeIntervalSince(rewriteStart) * 1000)
 
@@ -228,6 +260,9 @@ final class Coordinator {
         // "capturing" (the no-audio guard routes through here too).
         scratchpad.endCapture()
         routingToNote = false
+        // Clear the recording indicator's tone label (a tone-chord run can fail
+        // at begin, before endDictation cleared it).
+        activeToneName = nil
         state = .error(error.localizedDescription)
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))

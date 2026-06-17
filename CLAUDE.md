@@ -33,8 +33,9 @@ abstraction.
     Capture/
       AudioRecording.swift  // RecordedAudio + AudioRecording + StubRecorder
       AudioRecorder.swift   // real AVAudioEngine capture
-      HotkeyMonitor.swift   // configurable hold-to-talk CGEventTap (default ⌃⌥Space)
+      HotkeyMonitor.swift   // configurable hold-to-talk CGEventTap (default ⌃⌥Space + tone chords)
       DictationShortcut.swift  // the configurable chord (keyCode + modifiers)
+      ToneChordStore.swift  // up to 3 ⌃⌥ one-shot tone chords + persistence
     Transcription/
       Transcriber.swift     // Transcriber (+ prepare() default) + StubTranscriber
       WhisperKitTranscriber.swift  // real WhisperKit transcriber (small.en)
@@ -278,11 +279,78 @@ granted. Diagnostics via `Log.hotkey`. The shortcut is recorded from Settings
 (an interactive recorder in `MenuBarContent` — see Build / run); the Dictate
 hero and Settings keycaps both render from `DictationShortcut.symbols`.
 
+### Tone-switch hotkey chords
+
+Additive on top of the default hotkey: **up to three** ⌃⌥-only chords that each
+trigger a **one-shot** dictation in a specific tone **without changing the active
+tone**. Modeled by `ToneChordStore` (`Capture/`, `@MainActor @Observable`, owned
+by `AppDelegate`), mirroring `CorrectionsStore`/`RewriteProfilesStore`: a fixed
+array of three `ToneChordSlot`s (each `toneID: UUID?` + `keyCode: Int64?`; the
+modifier set is **fixed at ⌃⌥** so only the key is stored) persisted as JSON in
+`UserDefaults["toneChords"]`. The tone is referenced by its **stable id**, not its
+name, so a rename doesn't break the binding. All slots ship **empty** (opt-in); a
+slot does nothing unless **both** its tone and key are set.
+
+**Registration uses the same one tap.** `HotkeyMonitor` matches the default chord
+**plus** the cached tone chords (`ToneChordStore.active()`, read fresh per arm
+like the primary chord). `active()` **drops** any chord whose tone no longer
+exists, so a deleted tone's key types normally again. `handle()`'s engage/consume
+state machine is generalized: `matchChord()` resolves the default chord (its
+configured modifiers) or a tone chord (the fixed ⌃⌥) by a subset modifier test;
+`engagedFlags` (the engaged chord's required modifiers) drives the
+modifier-released-mid-hold end, and `consumingKeyCode` tracks the suppressed main
+key. `onChordDown` now carries the tone id (`(UUID?) -> Void`; nil = default).
+**Save-time keyCode-uniqueness** across the default chord and all tone chords is
+the disambiguation guarantee `matchChord` (default-first) relies on — enforced
+**from both sides**: the tone-chord recorder's `chordConflict` rejects a key used
+by the default or another slot, and the default-shortcut recorder/**Reset to
+default** reciprocate (reject a key owned by a tone chord / clear a colliding tone
+slot's key).
+
+**One-shot tone override threading.** `beginDictation(toneID:)` resolves the bound
+tone via `RewriteProfilesStore.resolveOverride(id:)` (read-fresh; nil ⇒ deleted ⇒
+**no-op, don't start**) and snapshots a `ToneSelection` (`.active` for a normal
+run; `.override(ActiveRewriteProfile?)` for a chord run — the value is nil for a
+blank-instruction tone = plain cleanup) plus the tone's display name. The
+`Rewriter` protocol gained the `tone:` parameter (`rewrite(_:tone:)`);
+`RewriteLadder` forwards it on **both** the primary and the cross-provider
+secondary call, and `HTTPRewriter`/`OpenAIRewriter` apply `.override` instead of
+reading `RewriteProfilesStore.active()` — so cloud and local both honor it with no
+extra ladder/Coordinator state and the **persisted/active tone is never touched**.
+The Coordinator snapshots the selection in `beginDictation` (overwritten every
+run, so no stale leak) and reads it once in `endDictation`.
+
+**HUD.** `Coordinator.activeToneName` (cleared on leaving `.recording` and in
+`recoverFromError`) names the one-shot tone in the Dictate hero's recording
+subtitle. **Limitation:** the hero is the only on-screen indicator, and the
+popover being **open** is exactly what routes the result to the in-popover note —
+so in the common case (inject into another app, popover closed) the tone name is
+never seen. No floating HUD (out of scope; pre-existing for all dictation).
+
+**Settings UI.** A "Tone shortcuts" section in Settings (`toneChordsSection`) with
+three rows: each a tone `Menu` (+ "None") and a ⌃⌥-only key recorder
+(`startRecordingChord`/`stopRecordingChord`, mirroring the default recorder's
+disarm-tap-during-capture dance but accepting **exactly** ⌃⌥ + one key, with
+inline collision feedback) and a clear (⊖) action. The two recorders are
+**mutually exclusive** (each `stop()`s the other first) so concurrent captures
+can't bypass the serial collision check.
+
+**Deviations from the spec.** Per-tone custom hotkeys **don't exist** in this app
+(tones are picker-selected), so that collision clause is N/A — collision covers
+the default chord + the three tone chords. The "reserved/system shortcut can't be
+registered" clause is intentionally **skipped**: a head-inserted session
+`CGEventTap` has no per-chord registration that can fail and no API to query
+reservedness. The keyCode-uniqueness rule is deliberately **conservative** (it
+blocks a few technically-unambiguous same-key/different-modifier combos) to keep
+the tap match unambiguous and simple.
+
 ### Coordinator entry points
 
 `runPipeline()` is replaced by two entry points the hotkey drives:
-- `beginDictation()` — **synchronous**, runs from the chord-down handler;
-  guards `state == .idle`, sets `.recording`, calls `recorder.start()`.
+- `beginDictation(toneID:)` — **synchronous**, runs from the chord-down handler;
+  guards `state == .idle`, resolves a one-shot `ToneSelection` from `toneID` (nil
+  for the default chord; a deleted tone ⇒ no-op), sets `.recording`, calls
+  `recorder.start()`.
 - `endDictation()` — **async**, dispatched from chord-up; guards
   `state == .recording` then claims `.transcribing` **synchronously before
   the first await**, then `stop()` → transcribe → rewrite → **correct** →

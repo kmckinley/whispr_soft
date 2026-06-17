@@ -25,7 +25,7 @@ nonisolated struct RewriteLadder: Rewriter {
     let openai: Rewriter
     let local: Rewriter
 
-    func rewrite(_ text: String) async throws -> RewriteResult {
+    func rewrite(_ text: String, tone: ToneSelection) async throws -> RewriteResult {
         let localMode = UserDefaults.standard.bool(forKey: "localMode")
         // The engine the user *intended* this run to use, independent of whether
         // it succeeded — so the dictation log shows "Claude (raw fallback)"
@@ -50,7 +50,7 @@ nonisolated struct RewriteLadder: Rewriter {
         }
 
         do {
-            return try await primary.rewrite(text)
+            return try await primary.rewrite(text, tone: tone)
         } catch {
             Log.rewrite.error("\(label, privacy: .public) rewrite failed: \(error.localizedDescription, privacy: .public)")
 
@@ -68,7 +68,10 @@ nonisolated struct RewriteLadder: Rewriter {
                 if let otherKey, !otherKey.isEmpty {
                     let secondary: Rewriter = other == .openai ? openai : claude
                     do {
-                        var rr = try await secondary.rewrite(text)
+                        // Forward the one-shot tone override here too, so a chord
+                        // dictation that fails over to the other cloud provider
+                        // keeps its tone (this path is off the happy path).
+                        var rr = try await secondary.rewrite(text, tone: tone)
                         rr.usedProviderFallback = true
                         Log.rewrite.notice("provider fallback: \(active.displayName, privacy: .public) failed, used \(other.displayName, privacy: .public)")
                         return rr
