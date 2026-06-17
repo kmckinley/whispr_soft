@@ -110,7 +110,7 @@ selecting the active tone happens back on Dictate.
 A deterministic find-and-replace list applied *after* cleanup, just before the
 text is pasted — so neither Whisper's mishearing nor the cleanup model can
 reintroduce a wrong spelling. Useful for proper names Whisper consistently gets
-wrong (e.g. "chem soft" → "Kemsoft", "shit audio" → "Schiit Audio"). Matching is
+wrong. Matching is
 case-insensitive and whole-word; the replacement is inserted with exactly the
 casing you type. Add and remove rows inline.
 
