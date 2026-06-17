@@ -33,6 +33,8 @@ struct MenuBarContent: View {
     @State private var showingTonePicker = false
     /// Inline target-language picker disclosure on the Dictate tab.
     @State private var showingLanguagePicker = false
+    /// Inline cloud-engine (provider) picker disclosure on the Dictate tab.
+    @State private var showingEnginePicker = false
 
     /// The tone profile expanded for editing on the Tone tab; one at a time.
     @State private var expandedProfileID: UUID?
@@ -41,6 +43,16 @@ struct MenuBarContent: View {
     @State private var addingKey = false
     @State private var apiKeyDraft = ""
     @State private var hasStoredKey = false
+
+    /// Settings: the ChatGPT (OpenAI) key row — reveal the field; whether a key
+    /// is stored. Mirrors the Claude key state above.
+    @State private var addingOpenAIKey = false
+    @State private var openAIKeyDraft = ""
+    @State private var hasOpenAIKey = false
+
+    /// The selected cloud provider id. Read fresh per rewrite by
+    /// `CloudProvider.active()`, so switching takes effect on the next dictation.
+    @AppStorage(CloudProvider.storageKey) private var selectedProvider = CloudProvider.claude.id
 
     /// Measured height of the current scrollable body, capped at 444 (the design
     /// cap); a `.window` MenuBarExtra sizes to content, so the scroll area needs
@@ -100,7 +112,7 @@ struct MenuBarContent: View {
                 tabScroll
             }
         }
-        .onAppear { hasStoredKey = Keychain.apiKey()?.isEmpty == false }
+        .onAppear { refreshKeyStatus() }
         .onChange(of: corrections.items) { _, _ in corrections.save() }
         .onChange(of: profiles.items) { _, _ in profiles.save() }
         .onChange(of: profiles.selectedID) { _, _ in profiles.saveSelection() }
@@ -373,7 +385,7 @@ struct MenuBarContent: View {
 
     private var settingsScroll: some View {
         measuredScroll { settingsContent.padding(14) }
-            .onAppear { hasStoredKey = Keychain.apiKey()?.isEmpty == false }
+            .onAppear { refreshKeyStatus() }
     }
 
     @ViewBuilder
@@ -546,7 +558,11 @@ struct MenuBarContent: View {
     }
 
     /// The cloud/local engine display name (matches the Engine row + Settings).
-    private var engineName: String { localMode ? "LM Studio" : "Claude" }
+    /// Reuses `activeProviderName` (which reads the `@AppStorage` selection) so
+    /// the hero subtitle re-renders when the provider changes.
+    private var engineName: String {
+        localMode ? "LM Studio" : activeProviderName
+    }
 
     private var dictateGroupedCard: some View {
         VStack(spacing: 0) {
@@ -581,28 +597,86 @@ struct MenuBarContent: View {
 
             hairline
 
-            // Engine row → Settings.
-            Button { withAnimation(.easeInOut(duration: 0.22)) { showingSettings = true } } label: {
-                HStack(spacing: 8) {
-                    Text("Engine")
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(.white.opacity(0.55))
-                    Spacer()
-                    Circle().fill(localMode ? Theme.green : Theme.accent).frame(width: 6, height: 6)
-                    Text(localMode ? "Local · LM Studio" : "Cloud · Claude")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.9))
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.3))
+            // Engine row. In Local Mode it's a settings-nav row (unchanged). In
+            // Cloud Mode it's an inline picker between the cloud providers.
+            if localMode {
+                Button { withAnimation(.easeInOut(duration: 0.22)) { showingSettings = true } } label: {
+                    HStack(spacing: 8) {
+                        Text("Engine")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(.white.opacity(0.55))
+                        Spacer()
+                        Circle().fill(Theme.green).frame(width: 6, height: 6)
+                        Text("Local · LM Studio")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.9))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.3))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 11)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 11)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+            } else {
+                Button { withAnimation(.easeInOut(duration: 0.18)) { showingEnginePicker.toggle() } } label: {
+                    groupedRow(title: "Engine", value: activeProviderName, chevronUp: showingEnginePicker)
+                }
+                .buttonStyle(.plain)
+
+                if showingEnginePicker {
+                    hairline
+                    engineOptionRow(.claude)
+                    engineOptionRow(.openai)
+                }
             }
-            .buttonStyle(.plain)
         }
         .groupedCardSurface()
+    }
+
+    /// The active cloud provider's display name (Cloud Mode Engine row value).
+    private var activeProviderName: String {
+        CloudProvider(rawValue: selectedProvider)?.displayName ?? "Claude"
+    }
+
+    /// One cloud-provider option in the inline Engine picker. A provider with a
+    /// stored key switches inline; one without jumps to Settings (showing an
+    /// "Add key" hint) so the user can add it.
+    private func engineOptionRow(_ provider: CloudProvider) -> some View {
+        let connected = provider == .claude ? hasStoredKey : hasOpenAIKey
+        return Button {
+            if connected {
+                selectedProvider = provider.id
+                withAnimation(.easeInOut(duration: 0.18)) { showingEnginePicker = false }
+            } else {
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    showingEnginePicker = false
+                    showingSettings = true
+                }
+            }
+        } label: {
+            HStack {
+                Text(provider.displayName)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+                Spacer()
+                if !connected {
+                    Text("Add key")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.accent)
+                } else if selectedProvider == provider.id {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.violetCheck)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func groupedRow(title: String, value: String, chevronUp: Bool) -> some View {
@@ -935,7 +1009,15 @@ struct MenuBarContent: View {
             VStack(spacing: 0) {
                 localModeSettingRow
                 hairline
-                apiKeySettingRow
+                apiKeyRow(title: "Claude API key", placeholder: "sk-ant-…",
+                          connected: hasStoredKey, adding: $addingKey, draft: $apiKeyDraft,
+                          onSave: saveAPIKey,
+                          onRemove: { Keychain.deleteAPIKey(); hasStoredKey = false })
+                hairline
+                apiKeyRow(title: "ChatGPT API key", placeholder: "sk-…",
+                          connected: hasOpenAIKey, adding: $addingOpenAIKey, draft: $openAIKeyDraft,
+                          onSave: saveOpenAIKey,
+                          onRemove: { Keychain.deleteOpenAIKey(); hasOpenAIKey = false })
                 hairline
                 shortcutSettingRow
             }
@@ -987,33 +1069,38 @@ struct MenuBarContent: View {
         .padding(.vertical, 11)
     }
 
-    @ViewBuilder
-    private var apiKeySettingRow: some View {
+    /// A reusable API-key settings row: connected dot + "Connected" + Remove, or
+    /// empty dot + "Not connected" + Add key/Cancel, with the SecureField + Save
+    /// revealed while adding. Used for both the Claude and ChatGPT keys.
+    private func apiKeyRow(title: String,
+                           placeholder: String,
+                           connected: Bool,
+                           adding: Binding<Bool>,
+                           draft: Binding<String>,
+                           onSave: @escaping () -> Void,
+                           onRemove: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Claude API key")
+                Text(title)
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(.white.opacity(0.9))
                 Spacer()
-                if hasStoredKey {
+                if connected {
                     HStack(spacing: 6) {
                         Circle().fill(Theme.green).frame(width: 6, height: 6)
                         Text("Connected").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
                     }
-                    Button("Remove") {
-                        Keychain.deleteAPIKey()
-                        hasStoredKey = false
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.red)
+                    Button("Remove", action: onRemove)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.red)
                 } else {
                     HStack(spacing: 6) {
                         Circle().fill(Color.white.opacity(0.25)).frame(width: 6, height: 6)
                         Text("Not connected").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
                     }
-                    Button(addingKey ? "Cancel" : "Add key") {
-                        withAnimation(.easeInOut(duration: 0.18)) { addingKey.toggle() }
+                    Button(adding.wrappedValue ? "Cancel" : "Add key") {
+                        withAnimation(.easeInOut(duration: 0.18)) { adding.wrappedValue.toggle() }
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 11))
@@ -1021,14 +1108,14 @@ struct MenuBarContent: View {
                 }
             }
 
-            if !hasStoredKey && addingKey {
+            if !connected && adding.wrappedValue {
                 HStack(spacing: 6) {
-                    SecureField("sk-ant-…", text: $apiKeyDraft)
-                        .onSubmit(saveAPIKey)
+                    SecureField(placeholder, text: draft)
+                        .onSubmit(onSave)
                         .insetField()
-                    Button("Save", action: saveAPIKey)
+                    Button("Save", action: onSave)
                         .font(.system(size: 11))
-                        .disabled(apiKeyDraft.isEmpty)
+                        .disabled(draft.wrappedValue.isEmpty)
                 }
             }
         }
@@ -1055,6 +1142,23 @@ struct MenuBarContent: View {
         apiKeyDraft = ""
         hasStoredKey = true
         addingKey = false
+    }
+
+    /// Refresh both cloud-key "connected" indicators from the Keychain. Called
+    /// on every popover/Settings appearance so a key added or removed elsewhere
+    /// is reflected.
+    private func refreshKeyStatus() {
+        hasStoredKey = Keychain.apiKey()?.isEmpty == false
+        hasOpenAIKey = Keychain.openAIKey()?.isEmpty == false
+    }
+
+    private func saveOpenAIKey() {
+        let key = openAIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        Keychain.setOpenAIKey(key)
+        openAIKeyDraft = ""
+        hasOpenAIKey = true
+        addingOpenAIKey = false
     }
 
     /// Marketing version from the bundle, or nil if unavailable (don't hardcode).

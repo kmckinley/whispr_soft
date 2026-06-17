@@ -40,7 +40,8 @@ final class Coordinator {
         recorder: AudioRecording = AudioRecorder(),
         transcriber: Transcriber = WhisperKitTranscriber(),
         rewriter: Rewriter = RewriteLadder(
-            cloud: HTTPRewriter(config: .cloud),
+            claude: HTTPRewriter(config: .cloud),
+            openai: OpenAIRewriter(),
             local: HTTPRewriter(config: .local)
         ),
         injector: TextInjector = PasteboardInjector(),

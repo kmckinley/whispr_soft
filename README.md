@@ -14,9 +14,14 @@ focused. Transcription runs **on-device** — your audio never leaves the Mac.
   downloads automatically on first use (a few hundred MB), then runs offline.
 - **Optional transcript cleanup.** The raw transcript can be lightly cleaned up
   (punctuation, grammar, filler removal) before it's pasted. Two modes:
-  - **Cloud** — Claude Haiku via the Anthropic API. Requires an API key.
+  - **Cloud** — a hosted model via API. Choose the provider inline on the
+    **Dictate** tab's **Engine** row: **Claude** (Anthropic, `claude-haiku-4-5`)
+    or **ChatGPT** (OpenAI, `gpt-4.1-mini`). Each provider has its own API key,
+    added in **Settings**; selecting a provider with no key yet sends you to
+    Settings to add one. Switching providers takes effect on the next dictation.
   - **Local Mode** — a local [LM Studio](https://lmstudio.ai) instance at
-    `127.0.0.1:1234`. No key, nothing leaves the Mac.
+    `127.0.0.1:1234`. No key, nothing leaves the Mac. Unchanged by the cloud
+    provider choice — Local Mode is always on-device.
   - With no key and Local Mode off, the raw transcript is pasted as-is.
 - **Tone profiles.** Pick a tone for the cleaned-up text from a user-editable
   list of profiles (full create/edit/delete/reorder). Each profile is a short
@@ -65,8 +70,11 @@ cleaning up. The card below is the quick-access control panel: **Language** pick
 the output language — leave it on *English (United States)* for no translation,
 or choose another to have the cleaned-up text translated before it's pasted;
 **Tone profile** picks the active tone for cleanup (this is the only place the
-active tone is chosen); and **Engine** shows the current cleanup backend —
-Cloud · Claude or Local — and links to Settings.
+active tone is chosen); and **Engine** picks the cleanup backend. In Cloud mode
+it's an inline switcher between **Claude** and **ChatGPT** — selecting a provider
+with a stored key switches instantly, while one without a key (shown with an
+*Add key* hint) jumps to Settings so you can add it. In Local mode the row reads
+*Local · LM Studio* and links to Settings.
 
 If you dictate while this popover is open, the cleaned-up text is routed to a
 **note box** that animates open just below the hero (instead of being pasted
@@ -101,20 +109,23 @@ casing you type. Add and remove rows inline.
 ![The Settings screen](screenshots/settings.png)
 
 Behind the gear: the **Local mode** toggle (route cleanup to a local LM Studio
-instance instead of the cloud), the **Claude API key** add/remove flow (stored
-in the Keychain, shown here as Connected), the **Dictation shortcut** reference,
-Quit, and the app version.
+instance instead of the cloud), the **Claude API key** and **ChatGPT API key**
+add/remove flows (each stored in the Keychain, shown here as Connected), the
+**Dictation shortcut** reference, Quit, and the app version. Add whichever cloud
+provider's key you plan to use; switch between them from the Dictate tab's Engine
+row.
 
 ## Privacy
 
 - **Audio is always transcribed locally and never leaves your Mac.**
-- The **text** transcript is sent to Anthropic **only** when Cloud cleanup mode
-  is active *and* an API key is set. In every other configuration the transcript
+- The **text** transcript is sent to a cloud provider (Anthropic for Claude, or
+  OpenAI for ChatGPT) **only** when Cloud cleanup mode is active *and* the
+  selected provider's API key is set. In every other configuration the transcript
   stays on the Mac.
 - **Local Mode is local-only.** If the local model is unreachable or fails, it
   falls back to pasting the raw transcript — **never** to the cloud. Audio-derived
   text leaves the Mac only in Cloud mode.
-- The Anthropic API key is stored in the login **Keychain** (entered through the
+- The cloud API keys are stored in the login **Keychain** (entered through the
   menu), never in source or config files.
 
 ## Requirements
@@ -144,8 +155,10 @@ checklist until they are.
 
 ### Optional: transcript cleanup
 
-- **Cloud** — paste an Anthropic API key into the menu. The transcript is cleaned
-  up by Claude Haiku and pasted.
+- **Cloud** — add an API key in Settings for your chosen provider: an Anthropic
+  key for **Claude** (`claude-haiku-4-5`) or an OpenAI key for **ChatGPT**
+  (`gpt-4.1-mini`). Pick the provider on the Dictate tab's Engine row; the
+  transcript is cleaned up by it and pasted.
 - **Local** — run LM Studio at `127.0.0.1:1234` with a model loaded, then enable
   **Local Mode** in the menu. Cleanup runs entirely on your machine.
 
