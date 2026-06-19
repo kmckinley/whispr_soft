@@ -221,6 +221,26 @@ its duration, so it's never blocked synchronously. It transcribes
 `[TranscriptionResult]`, joined and trimmed) — no file round-trip.
 `StubTranscriber` is retained for previews/tests.
 
+**Vocabulary biasing.** The Corrections' replacement (`to`) terms are also fed
+to WhisperKit as a decoding bias so the user's curated domain vocabulary
+(proper nouns, product names, jargon) is recognised at transcription time —
+complementing `KeywordCorrector`, which only fixes mishearings after the fact.
+No new UI or setting: it's automatic from the Corrections the user already
+maintains. `CorrectionsStore.biasTerms()` (a `nonisolated` reader, read **fresh
+per dictation** like `KeywordCorrector`) returns the `to` values trimmed,
+empties dropped, **de-duplicated preserving first-occurrence order** (the user
+maps several `from` variants to one `to`, so the raw list repeats).
+`transcribe(_:)` reads those terms; with an **empty** list the
+`transcribe(audioArray:)` call is byte-for-byte unchanged (no decode options).
+Otherwise — and only when `kit.tokenizer` is available (else biasing is
+skipped, never failing a dictation) — it builds the prompt (terms joined with
+", "), tokenizes per WhisperKit's CLI recipe
+(`tokenizer.encode(text: " " + …).filter { $0 < specialTokens.specialTokenBegin }`),
+defensively caps to ~200 tokens (Whisper's prompt context is ~224; WhisperKit
+also clamps internally), and passes
+`DecodingOptions(usePrefillPrompt: true, promptTokens:)` via `decodeOptions:`.
+Logs only a count (`WhisperKit: biased with N vocab term(s)`) — never the terms.
+
 The model is **loaded once**: a cached `Task<Void, Error>` (`loadTask`)
 dedupes concurrent loads — the launch preload and a first dictation share
 one download rather than racing two. The loaded `WhisperKit` lands in a
@@ -407,7 +427,10 @@ so this just keeps the stored key tidy). Blank-`from` rows are skipped; blank-`t
 deletes the match. The menu's corrections list shows up to **five rows** then
 scrolls. Keys/values are regex-escaped, so special characters can't
 break matching. Logs only a count (`KeywordCorrector: applied N correction(s)`)
-— never content. Diagnostics via `Log.correction`.
+— never content. Diagnostics via `Log.correction`. The same replacement (`to`)
+terms double as a **transcription-time decoding bias** via
+`CorrectionsStore.biasTerms()` (deduplicated, read fresh per dictation) — see
+the Transcription stage's "Vocabulary biasing".
 
 ### Injection stage
 

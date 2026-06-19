@@ -84,13 +84,44 @@ final class WhisperKitTranscriber: Transcriber {
         return kit
     }
 
+    /// Whisper's prompt context is limited to ~224 tokens; cap the bias prompt
+    /// well under that. WhisperKit clamps internally too — this is
+    /// belt-and-suspenders so a huge corrections list can't crowd out the audio.
+    private static let maxBiasTokens = 200
+
     func transcribe(_ audio: RecordedAudio) async throws -> String {
         let kit = try await ensureLoaded()
-        let results = try await kit.transcribe(audioArray: audio.samples)
+
+        let results = try await kit.transcribe(
+            audioArray: audio.samples,
+            decodeOptions: biasOptions(for: kit))
         let text = results.map(\.text).joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         Log.transcription.notice("WhisperKit: transcribed \(text.count, privacy: .public) chars")
         return text
+    }
+
+    /// Builds decode options that bias recognition toward the user's curated
+    /// vocabulary (the Corrections' replacement terms), read fresh per call.
+    /// Returns nil — leaving the transcribe call byte-for-byte as before — when
+    /// there are no terms or the tokenizer isn't available, so a dictation is
+    /// never failed over biasing.
+    private func biasOptions(for kit: WhisperKit) -> DecodingOptions? {
+        let terms = CorrectionsStore.biasTerms()
+        guard !terms.isEmpty, let tokenizer = kit.tokenizer else { return nil }
+
+        // WhisperKit's own CLI recipe: prepend a leading space, encode, and drop
+        // any special tokens that slipped in.
+        let promptText = terms.joined(separator: ", ")
+        var tokens = tokenizer.encode(text: " " + promptText.trimmingCharacters(in: .whitespaces))
+            .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+        if tokens.count > Self.maxBiasTokens {
+            tokens = Array(tokens.prefix(Self.maxBiasTokens))
+        }
+        guard !tokens.isEmpty else { return nil }
+
+        Log.transcription.notice("WhisperKit: biased with \(terms.count, privacy: .public) vocab term(s)")
+        return DecodingOptions(usePrefillPrompt: true, promptTokens: tokens)
     }
 
     /// Preload hook: kick off the model load so it's warm before the first
