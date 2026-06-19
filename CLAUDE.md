@@ -54,6 +54,9 @@ abstraction.
       Keychain.swift        // Claude API key store (generic password)
     UI/
       MenuBarContent.swift  // the menu-bar popover (incl. the permissions gate)
+      SharedVisuals.swift   // Theme tokens + Color(hex:) + WaveformBars + Spinner (shared by popover & HUD)
+      HUDView.swift         // the floating on-screen dictation pill (pure observer)
+      HUDController.swift   // owns the non-activating NSPanel; shows/hides/positions it
 
 The Xcode project uses a `PBXFileSystemSynchronizedRootGroup`: files on
 disk under `WhisprSoft/` are picked up automatically — no pbxproj edits
@@ -322,10 +325,9 @@ run, so no stale leak) and reads it once in `endDictation`.
 
 **HUD.** `Coordinator.activeToneName` (cleared on leaving `.recording` and in
 `recoverFromError`) names the one-shot tone in the Dictate hero's recording
-subtitle. **Limitation:** the hero is the only on-screen indicator, and the
-popover being **open** is exactly what routes the result to the in-popover note —
-so in the common case (inject into another app, popover closed) the tone name is
-never seen. No floating HUD (out of scope; pre-existing for all dictation).
+subtitle **and** in the floating on-screen HUD (see "On-screen dictation HUD"
+below), so the tone is visible even when the popover is closed (the common
+inject-into-another-app case).
 
 **Settings UI.** A "Tone shortcuts" section in Settings (`toneChordsSection`) with
 three rows: each a tone `Menu` (+ "None") and a ⌃⌥-only key recorder
@@ -571,6 +573,54 @@ branch only — Local Mode never crosses to a cloud provider). Off → cloud →
 cloud, if fallback on) → raw. Audio-derived text leaves the Mac only in Cloud
 Mode; with cloud fallback on, a failure can route the text to the *other* cloud
 vendor (Anthropic ↔ OpenAI) before raw.
+
+## On-screen dictation HUD
+
+A floating pill near the **top-center** of the active screen gives visual
+feedback during every dictation, so the user knows the app is listening/working
+— and which tone is active — even when the menu popover is closed and they're
+dictating into another app. It appears when a dictation starts and stays through
+the whole pipeline (recording → transcribing → rewriting → injecting), then
+auto-dismisses on return to `.idle`.
+
+- **`HUDView`** (`UI/HUDView.swift`) — the SwiftUI pill: a compact dark
+  translucent capsule with a subtle `Theme.accent` border. It renders from
+  `coordinator.state` (a pure observer; it never pushes to the Coordinator):
+  `.recording` shows a scaled-down `WaveformBars` + "Listening" (plus the
+  accent-colored `coordinator.activeToneName` on a second line when a tone chord
+  drove the run — making the one-shot tone visible); transcribing/rewriting/
+  injecting show a `Spinner` + "Cleaning up…"; `.error` shows a red warning glyph
+  + the message (width-bounded so it tail-truncates to one line); `.idle` renders
+  nothing.
+- **`HUDController`** (`UI/HUDController.swift`, `@MainActor final class`, owned
+  by `AppDelegate`, started in `applicationDidFinishLaunching` after the model
+  preload) — owns a **borderless, non-activating `NSPanel`** (`.statusBar` level,
+  `canJoinAllSpaces`/`fullScreenAuxiliary`/`stationary`/`ignoresCycle`,
+  `ignoresMouseEvents`, clear background, shown via `orderFrontRegardless()` —
+  **never** `makeKeyAndOrderFront`). It must never steal focus or intercept input
+  (the user is typing into another app; the synthetic ⌘V paste during
+  `.injecting` must pass through untouched). It observes `coordinator.state` with
+  `withObservationTracking`, **re-arming after each change** (the tracker fires
+  once per registration); the onChange hops to the main actor, then `update()`
+  shows for any non-idle state and hides on `.idle`. Position is recomputed each
+  show (`NSScreen.main` → `visibleFrame`, horizontally centered, top edge ~12pt
+  below `visibleFrame.maxY`). Show/hide use a ~0.15s alpha fade; a
+  `transitionGeneration` token guards the hide's deferred `orderOut` so a
+  re-press within the fade window can't yank a panel the next dictation just
+  re-raised.
+- **Gating.** Honors `@AppStorage("showHUD")` (defaults **on**; absent =
+  treated as on, explicit false = never show) — a "Show on-screen indicator"
+  toggle in Settings. The HUD does **not** show for `isModelLoading` on its own
+  (model-loading feedback stays in the menu); a dictation that starts before the
+  model is ready still goes `.recording` → … and shows normally. The `.error`
+  case needs no timer — the Coordinator returns to `.idle` ~2s later via
+  `recoverFromError`, so the HUD shows the error briefly then hides.
+
+`Theme`, `Color(hex:)`, `WaveformBars`, and `Spinner` were extracted from
+`MenuBarContent.swift` to `UI/SharedVisuals.swift` (now internal access) so the
+popover hero and the HUD render from one copy. `PulseRing`/`StatusDot`/
+`cardSurface`/`Keycap` stay private to `MenuBarContent` (the HUD doesn't need
+them).
 
 ## Build / run
 

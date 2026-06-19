@@ -112,6 +112,10 @@ struct MenuBarContent: View {
     /// are always collected and persisted; this only controls visibility.
     @AppStorage("showLogs") private var showLogs = false
 
+    /// Show the floating on-screen dictation indicator (HUD). Defaults on;
+    /// HUDController reads the same key to gate showing the panel.
+    @AppStorage("showHUD") private var showHUD = true
+
     /// Cross-provider cloud fallback: if the active cloud provider fails, try the
     /// other one before raw. Read fresh per rewrite by RewriteLadder. Cloud Mode
     /// only; gated in the UI on both cloud keys being present.
@@ -1092,6 +1096,8 @@ struct MenuBarContent: View {
                 hairline
                 providerFallbackSettingRow
                 hairline
+                showHUDSettingRow
+                hairline
                 shortcutSettingRow
             }
             .groupedCardSurface()
@@ -1174,6 +1180,27 @@ struct MenuBarContent: View {
         .padding(.vertical, 11)
         .disabled(!bothKeys)
         .opacity(bothKeys ? 1 : 0.6)
+    }
+
+    /// Toggle for the floating on-screen dictation indicator. HUDController reads
+    /// the same `@AppStorage("showHUD")` key, so flipping this gates the next
+    /// dictation's HUD without a relaunch.
+    private var showHUDSettingRow: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Show on-screen indicator")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text("A floating pill near the top of the screen while dictating.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            LocalToggle(isOn: $showHUD)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
     }
 
     // MARK: - Logs
@@ -1792,30 +1819,9 @@ struct MenuBarContent: View {
 }
 
 // MARK: - Design tokens
-
-private enum Theme {
-    static let accent = Color(hex: 0x9A8BFF)
-    static let accentSoft = Color(hex: 0x9A8BFF, alpha: 0.16)
-    static let accentBorder = Color(hex: 0x9A8BFF, alpha: 0.45)
-    static let accentGlow = Color(hex: 0x9A8BFF, alpha: 0.40)
-    static let violetCheck = Color(hex: 0xB6ABFF)
-    static let green = Color(hex: 0x5FD39A)
-    static let amber = Color(hex: 0xF5B14C)
-    static let red = Color(hex: 0xFF8080)
-    static let micTint = Color(hex: 0xCFC9FF)
-    static let micDark = Color(hex: 0x6A59E0)
-    static let knobDark = Color(hex: 0x171426)
-}
-
-private extension Color {
-    init(hex: UInt, alpha: Double = 1) {
-        self.init(.sRGB,
-                  red: Double((hex >> 16) & 0xFF) / 255,
-                  green: Double((hex >> 8) & 0xFF) / 255,
-                  blue: Double(hex & 0xFF) / 255,
-                  opacity: alpha)
-    }
-}
+//
+// `Theme` and the `Color(hex:)` initializer live in SharedVisuals.swift (shared
+// with the on-screen HUD).
 
 private extension View {
     /// Card chrome: hairline-bordered translucent rounded rectangle.
@@ -1884,24 +1890,7 @@ private struct StatusDot: View {
     }
 }
 
-/// Seven staggered waveform bars (recording hero).
-private struct WaveformBars: View {
-    private let heights: [CGFloat] = [16, 24, 30, 21, 30, 24, 16]
-    @State private var animating = false
-    var body: some View {
-        HStack(spacing: 3) {
-            ForEach(heights.indices, id: \.self) { i in
-                Capsule()
-                    .fill(Color.white.opacity(0.95))
-                    .frame(width: 3, height: heights[i])
-                    .scaleEffect(y: animating ? 1 : 0.4, anchor: .center)
-                    .animation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true).delay(Double(i) * 0.08),
-                               value: animating)
-            }
-        }
-        .onAppear { animating = true }
-    }
-}
+// `WaveformBars` lives in SharedVisuals.swift (shared with the on-screen HUD).
 
 /// Expanding/fading accent ring behind the recording hero.
 private struct PulseRing: View {
@@ -1917,22 +1906,7 @@ private struct PulseRing: View {
     }
 }
 
-/// A 30pt indeterminate spinner (processing / model-loading hero).
-private struct Spinner: View {
-    @State private var rotate = false
-    var body: some View {
-        ZStack {
-            Circle().stroke(Color.white.opacity(0.25), lineWidth: 2.5)
-            Circle()
-                .trim(from: 0, to: 0.25)
-                .stroke(Color.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                .rotationEffect(.degrees(rotate ? 360 : 0))
-                .animation(.linear(duration: 0.7).repeatForever(autoreverses: false), value: rotate)
-        }
-        .frame(width: 30, height: 30)
-        .onAppear { rotate = true }
-    }
-}
+// `Spinner` lives in SharedVisuals.swift (shared with the on-screen HUD).
 
 /// A 30×30 icon button with an 8pt hover background (the header gear).
 private struct HoverIconButton: View {
