@@ -20,7 +20,8 @@ struct WhisprSoftApp: App {
                            profiles: appDelegate.profiles,
                            toneChords: appDelegate.toneChords,
                            scratchpad: appDelegate.scratchpad,
-                           log: appDelegate.log)
+                           log: appDelegate.log,
+                           stats: appDelegate.stats)
         }
         .menuBarExtraStyle(.window)
     }
@@ -34,6 +35,7 @@ struct WhisprSoftApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let scratchpad: ScratchpadStore
     let log: DictationLogStore
+    let stats: DictationStatsStore
     let coordinator: Coordinator
     let permissions = PermissionsManager()
     let corrections = CorrectionsStore()
@@ -51,9 +53,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // during init.
         let pad = ScratchpadStore()
         let dictationLog = DictationLogStore()
+        let dictationStats = DictationStatsStore()
         self.scratchpad = pad
         self.log = dictationLog
-        self.coordinator = Coordinator(scratchpad: pad, log: dictationLog)
+        self.stats = dictationStats
+        self.coordinator = Coordinator(scratchpad: pad, log: dictationLog, stats: dictationStats)
         super.init()
     }
 
