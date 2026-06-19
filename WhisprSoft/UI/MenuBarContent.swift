@@ -1020,7 +1020,7 @@ struct MenuBarContent: View {
 
     private var correctionsTab: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Replaces misheard words after cleanup, automatically.")
+            Text("Replaces misheard words after cleanup, automatically. Replacement terms also help recognition during transcription.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.white.opacity(0.5))
                 .fixedSize(horizontal: false, vertical: true)
