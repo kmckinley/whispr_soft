@@ -58,7 +58,10 @@ audio never leaves the Mac.
   path is *speak English → paste another language*.)
 - **Keyword corrections.** A deterministic, user-editable find-and-replace list
   (e.g. fix a name Whisper consistently mishears) is applied *after* cleanup, so
-  neither Whisper nor the cleanup model can reintroduce the wrong spelling.
+  neither Whisper nor the cleanup model can reintroduce the wrong spelling. The
+  same replacement terms double as a **transcription bias** — they're fed to
+  Whisper as decoding hints, so your curated vocabulary (proper names, jargon) is
+  more likely to be heard correctly in the first place.
 - **Quick-note scratchpad.** If you dictate while the menu-bar popover is open —
   when there's no text field to paste into — the cleaned-up result is appended to
   a note box that animates open on the Dictate tab instead of being pasted. Each
@@ -67,6 +70,15 @@ audio never leaves the Mac.
   is kept in memory for the session (it survives closing and reopening the
   popover, but is cleared on quit and never written to disk). Dictating with the
   popover closed pastes into the frontmost app exactly as before.
+- **On-screen indicator.** An optional floating pill appears near the top of the
+  screen while you dictate, showing the live recording/processing state (and the
+  one-shot tone name when a tone shortcut is held) — handy when you're dictating
+  into another app with the popover closed. Toggle it with **Show on-screen
+  indicator** in Settings; it's on by default.
+- **Activity graph.** Settings shows a bar chart of how much you've dictated over
+  the last 90 days, with a **Day / Week / Month** view toggle. Only counts and
+  dates are stored — never any transcript text — and the data persists across
+  launches.
 - **Menu-bar agent.** Runs as a menu-bar item with no dock icon and no main
   window. Settings (API key, Local Mode, tone profiles, corrections) live in the
   menu.
@@ -120,7 +132,9 @@ text is pasted — so neither Whisper's mishearing nor the cleanup model can
 reintroduce a wrong spelling. Useful for proper names Whisper consistently gets
 wrong. Matching is
 case-insensitive and whole-word; the replacement is inserted with exactly the
-casing you type. Add and remove rows inline.
+casing you type. Add and remove rows inline. The replacement terms are also fed
+to Whisper as a decoding bias, so adding a correction helps that word get
+recognized correctly during transcription, not just fixed afterward.
 
 ### Settings
 
@@ -132,6 +146,8 @@ add/remove flows (each stored in the Keychain, shown here as Connected), the
 **Cloud fallback** toggle (if your active cloud provider fails, automatically
 try the other one before the raw transcript — only enabled once *both* the Claude
 and ChatGPT keys are set; if you later remove a key it disables again), the
+**Show on-screen indicator** toggle (the floating dictation pill near the top of
+the screen — on by default), the
 **Dictation shortcut** recorder (click **Change** to rebind the hold-to-talk
 chord — at least one modifier plus a key — or **Reset to default** for ⌃⌥Space),
 and a **Tone shortcuts** section with three slots — each pairs a tone with a
@@ -151,6 +167,11 @@ counts, where the text went (pasted or sent to the note), and the outcome
 and restored at launch) and can be cleared at any time; the toggle only controls
 whether they're shown. Entries never contain the transcript text itself — only
 counts, timings, and engine metadata.
+
+Settings also includes an **Activity** graph — a bar chart of delivered
+dictations over the last 90 days with a **Day / Week / Month** view toggle and a
+running total. Like the logs, it stores only counts and dates (never any
+transcript text), and both the data and the chosen view persist across launches.
 
 ## Privacy
 
