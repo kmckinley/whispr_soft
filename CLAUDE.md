@@ -638,6 +638,42 @@ reaches disk (`id` is omitted from `CodingKeys`; it's only SwiftUI list identity
 The "Show logs" toggle controls visibility only; collection and persistence always
 happen. Cleared on demand.
 
+### Activity stats
+
+`DictationStatsStore` (`App/DictationStatsStore.swift`, `@MainActor @Observable`,
+owned by `AppDelegate`) backs a Settings **activity graph**. Unlike the 100-entry
+`DictationLogStore` ring buffer — which can't span a 90-day view — it keeps only a
+**day-keyed count map** (`"yyyy-MM-dd"` → `Int`, a fixed `en_US_POSIX` formatter,
+current calendar/timezone, start-of-day) persisted as JSON in
+`UserDefaults["dictationStats"]`. Persistence is privacy-safe for the same reason
+as the log: **counts and dates only, never transcript content**, so no dictated
+text reaches disk. It mirrors `DictationLogStore`'s shape — `nonisolated init()`
+seeded from a `nonisolated loadCounts()` default initializer (so it works as a
+Coordinator default argument), `save()` on every mutation. The day-key
+`DateFormatter` is a plain (MainActor-isolated) `static let`, touched only by the
+MainActor `recordDictation`/`series`, so it needs no `nonisolated` escape hatch.
+`recordDictation(at:)` increments that day's count, **prunes** keys older than ~365
+days (lexicographic compare on the zero-padded keys = date order, no parsing), and
+saves. `series(_:)` returns a `[StatBucket]` over the trailing 90-day window
+(`startOfDay(today) − 89 days … today`) bucketed by `StatsGranularity`
+(`.day`/`.week`/`.month`): `.day` is one zero-filled bucket per day (continuous
+axis); `.week`/`.month` iterate the same day set and sum into calendar
+week/month buckets (so their sums equal the day totals). The headline total is
+summed from those buckets in the view (every granularity sums the same window
+days, so no separate pass is needed). **No backfill** — the graph starts empty (an honest "No dictations
+yet" on day one) rather than seeding from the log.
+
+The **Coordinator** takes `stats: DictationStatsStore` as an injected default arg
+(mirroring `log`) and calls `stats.recordDictation()` **once** on the success path
+only — right after the single success `log.record(...)`, so the no-audio guard and
+the catch block never count. `AppDelegate` constructs it as a shared local, passes
+it to `Coordinator`, and exposes it for the view. The Settings **Activity** section
+(`statsSection`/`statsChart` in `MenuBarContent`) is a Swift Charts (`import
+Charts`) `BarMark` chart (~140pt, `Theme.accent`) with a segmented Day/Week/Month
+`Picker` bound to `@AppStorage("statsGranularity")` (default `.day`, so the chosen
+view persists), a "<total> dictations · last 90 days" headline, sparse month-stride
+X ticks, and a muted "No dictations yet" empty state when the total is 0.
+
 Persistence `.onChange` hooks (`corrections.items`, `profiles.items`,
 `profiles.selectedID`) and the permission/hotkey hooks live on the
 always-mounted container, not a tab. Tabs scroll within a content-measured

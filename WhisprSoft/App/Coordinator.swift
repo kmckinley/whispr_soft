@@ -33,6 +33,7 @@ final class Coordinator {
     private let injector: TextInjector
     private let scratchpad: ScratchpadStore
     private let log: DictationLogStore
+    private let stats: DictationStatsStore
 
     /// Snapshotted in beginDictation() from whether the popover is open; honored
     /// for the whole run even if the popover is closed before release.
@@ -64,7 +65,8 @@ final class Coordinator {
         ),
         injector: TextInjector = PasteboardInjector(),
         scratchpad: ScratchpadStore = ScratchpadStore(),
-        log: DictationLogStore = DictationLogStore()
+        log: DictationLogStore = DictationLogStore(),
+        stats: DictationStatsStore = DictationStatsStore()
     ) {
         self.recorder = recorder
         self.transcriber = transcriber
@@ -72,6 +74,7 @@ final class Coordinator {
         self.injector = injector
         self.scratchpad = scratchpad
         self.log = log
+        self.stats = stats
     }
 
     // MARK: - Hotkey
@@ -235,6 +238,11 @@ final class Coordinator {
                 recordMs: recordMs, transcriptionMs: transcriptionMs, rewriteMs: rewriteMs,
                 totalMs: Int(Date().timeIntervalSince(processingStart) * 1000),
                 inputChars: inputChars, outputChars: outputChars, status: "OK"))
+
+            // Count this delivered dictation against today for the Settings
+            // activity graph. Success path only — the no-audio guard and the
+            // catch block above never reach here, so failures aren't counted.
+            stats.recordDictation()
         } catch {
             Log.pipeline.error("Pipeline error: \(error.localizedDescription, privacy: .public)")
             // The run failed before delivery, so report "—" for destination — the

@@ -16,6 +16,7 @@
 
 import SwiftUI
 import AppKit
+import Charts              // Settings activity graph (BarMark)
 import Carbon.HIToolbox  // kVK_Escape for the shortcut recorder
 import os                // Log.hotkey diagnostics in the chord recorder
 
@@ -27,6 +28,7 @@ struct MenuBarContent: View {
     @Bindable var toneChords: ToneChordStore
     @Bindable var scratchpad: ScratchpadStore
     let log: DictationLogStore
+    let stats: DictationStatsStore
 
     enum Tab: String, CaseIterable { case dictate = "Dictate", tone = "Tone", corrections = "Corrections" }
 
@@ -121,6 +123,10 @@ struct MenuBarContent: View {
     /// `TargetLanguage.active()`, so a change takes effect on the next dictation.
     /// Default (English US) means no translation.
     @AppStorage(TargetLanguage.storageKey) private var selectedLanguageID = TargetLanguage.default.id
+
+    /// The Settings activity-graph bucketing (Day / Week / Month). Persisted so
+    /// the chosen view survives a relaunch. Default Day.
+    @AppStorage("statsGranularity") private var statsGranularity = StatsGranularity.day.rawValue
 
     var body: some View {
         // Hard gate: until all permissions are granted the popover shows only
@@ -1112,6 +1118,8 @@ struct MenuBarContent: View {
             }
             .buttonStyle(.plain)
 
+            statsSection
+
             logsSection
 
             if let version = versionString {
@@ -1174,6 +1182,92 @@ struct MenuBarContent: View {
         .padding(.vertical, 11)
         .disabled(!bothKeys)
         .opacity(bothKeys ? 1 : 0.6)
+    }
+
+    // MARK: - Activity stats
+
+    /// The selected bucketing, decoded from the persisted raw value (Day on a
+    /// malformed value).
+    private var currentGranularity: StatsGranularity {
+        StatsGranularity(rawValue: statsGranularity) ?? .day
+    }
+
+    /// Settings activity graph: a Day/Week/Month picker, a 90-day headline, and a
+    /// compact bar chart of delivered dictations. Counts come from
+    /// `DictationStatsStore` (counts only — never transcript content).
+    private var statsSection: some View {
+        let granularity = currentGranularity
+        let buckets = stats.series(granularity)
+        // Every granularity sums to the same window total (the day axis is
+        // zero-filled; week/month sum the same days), so derive the headline from
+        // the buckets already built for the chart — no second 90-day pass.
+        let total = buckets.reduce(0) { $0 + $1.count }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Activity")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                Spacer()
+                Picker("", selection: $statsGranularity) {
+                    ForEach(StatsGranularity.allCases, id: \.self) { g in
+                        Text(g.rawValue.capitalized).tag(g.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 180)
+            }
+
+            Text("\(total) dictation\(total == 1 ? "" : "s") · last 90 days")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.45))
+
+            if total == 0 {
+                Text("No dictations yet")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.white.opacity(0.35))
+                    .frame(maxWidth: .infinity, minHeight: 140)
+            } else {
+                statsChart(buckets, granularity: granularity)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .groupedCardSurface()
+    }
+
+    /// The bar chart itself. Bars are unit-width to the granularity; X labels are
+    /// kept sparse (a few month ticks) so 90 daily bars don't clutter.
+    private func statsChart(_ buckets: [StatBucket], granularity: StatsGranularity) -> some View {
+        let unit: Calendar.Component = {
+            switch granularity {
+            case .day:   return .day
+            case .week:  return .weekOfYear
+            case .month: return .month
+            }
+        }()
+        return Chart(buckets) { bucket in
+            BarMark(
+                x: .value("Date", bucket.start, unit: unit),
+                y: .value("Dictations", bucket.count)
+            )
+            .foregroundStyle(Theme.accent.gradient)
+        }
+        .chartXAxis {
+            AxisMarks(values: .stride(by: .month)) { _ in
+                AxisGridLine().foregroundStyle(.white.opacity(0.06))
+                AxisTick().foregroundStyle(.white.opacity(0.2))
+                AxisValueLabel(format: .dateTime.month(.abbreviated))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading) { _ in
+                AxisGridLine().foregroundStyle(.white.opacity(0.06))
+                AxisValueLabel().foregroundStyle(.white.opacity(0.4))
+            }
+        }
+        .frame(height: 140)
     }
 
     // MARK: - Logs
