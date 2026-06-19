@@ -40,6 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let profiles = RewriteProfilesStore()
     let toneChords = ToneChordStore()
 
+    /// The floating on-screen dictation HUD. Owned here (like the hotkey) and a
+    /// pure observer of the Coordinator's state. Lazy so it's built after the
+    /// Coordinator exists.
+    private lazy var hud = HUDController(coordinator: coordinator)
+
     override init() {
         // Share the scratchpad and log stores between the Coordinator (writer)
         // and the view (reader/editor). Use locals to avoid referencing self
@@ -59,5 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the load needs no permissions, so preload unconditionally — it warms
         // even while the user is still working through onboarding.
         coordinator.preloadModel()
+        // Start observing pipeline state to drive the on-screen HUD.
+        hud.start()
     }
 }
