@@ -278,7 +278,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.whisprsoft;
 				PRODUCT_NAME = WhisprSoft;
 				REGISTER_APP_GROUPS = YES;
@@ -315,7 +315,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.whisprsoft;
 				PRODUCT_NAME = WhisprSoft;
 				REGISTER_APP_GROUPS = YES;
