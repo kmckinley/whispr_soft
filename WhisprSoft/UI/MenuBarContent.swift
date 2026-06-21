@@ -1788,21 +1788,49 @@ struct MenuBarContent: View {
                 }
                 if !appTones.items.isEmpty { hairline }
                 addAppRow
+                // The "already mapped" confirmation is rendered INLINE, not as a
+                // modal `.alert`: this section lives in a `.window` MenuBarExtra
+                // popover, where a modal alert steals key-window focus and the
+                // ensuing click-outside dismisses the whole popover before the
+                // button action runs. An in-card strip keeps focus on the popover.
+                if let pending = pendingSwitch {
+                    hairline
+                    pendingSwitchRow(pending)
+                }
             }
             .groupedCardSurface()
         }
-        // Present the "already mapped" confirmation. Confirm switches the existing
-        // mapping's tone in place; Cancel discards. Either path leaves `items` as
-        // the source of truth, so the `.onChange(of: appTones.items)` hook persists.
-        .alert("Already mapped", isPresented: Binding(
-            get: { pendingSwitch != nil },
-            set: { if !$0 { pendingSwitch = nil } }
-        ), presenting: pendingSwitch) { pending in
-            Button("Switch") { confirmSwitch(pending) }
-            Button("Cancel", role: .cancel) { pendingSwitch = nil }
-        } message: { pending in
+        // Don't let a pending confirmation linger when Settings is reopened
+        // (mirrors toneChordsSection's recorder cleanup).
+        .onDisappear { pendingSwitch = nil }
+    }
+
+    /// In-card confirmation strip shown when the user re-adds an already-mapped
+    /// app: switching its tone is a destructive overwrite, so confirm first.
+    /// Replaces a modal `.alert` (see `appToneSection`). Confirm switches the
+    /// mapping's tone in place; Cancel discards. Either path leaves `items` as the
+    /// source of truth, so the `.onChange(of: appTones.items)` hook persists.
+    private func pendingSwitchRow(_ pending: PendingSwitch) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             Text("\(pending.appName) is already mapped to \(pending.oldToneName). Switch it to \(pending.newToneName)?")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.white.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                Spacer()
+                Button("Cancel") { pendingSwitch = nil }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.55))
+                Button("Switch") { confirmSwitch(pending) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Theme.accent.opacity(0.08))
     }
 
     private func appToneRow(_ mapping: AppToneMapping) -> some View {

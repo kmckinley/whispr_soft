@@ -556,8 +556,15 @@ whose items are the eligible **running** apps (regular activation policy, has
 bundle id + name, excluding WhisprSoft; deduped, sorted), each a submenu of tone
 profiles; the Add control is disabled with a hint until at least one profile
 exists. Picking an **already-mapped** app routes through an "Already mapped"
-confirmation alert (`pendingSwitch`) that switches the existing mapping's tone in
-place (no duplicate); a row's own tone `Menu` is a direct edit (no confirm).
+confirmation (`pendingSwitch`) that switches the existing mapping's tone in place
+(no duplicate); a row's own tone `Menu` is a direct edit (no confirm). That
+confirmation is rendered **inline** as a strip inside the card
+(`pendingSwitchRow`), **not** a modal `.alert`: this section lives in a `.window`
+MenuBarExtra popover, where a modal alert steals key-window focus and the ensuing
+click-outside dismisses the whole popover before the button action runs — so an
+in-card strip (which keeps focus on the popover) is the only reliable confirm UI
+here. `appToneSection`'s `.onDisappear` clears `pendingSwitch` so a pending
+confirmation doesn't linger when Settings is reopened.
 Persistence is the `.onChange(of: appTones.items)` hook (no Save button).
 Privacy-safe by construction (bundle ids, app names, tone ids — never transcript
 content); the Coordinator logs only the matched tone **name**
