@@ -26,6 +26,7 @@ struct MenuBarContent: View {
     @Bindable var corrections: CorrectionsStore
     @Bindable var profiles: RewriteProfilesStore
     @Bindable var toneChords: ToneChordStore
+    @Bindable var appTones: AppToneMapStore
     @Bindable var scratchpad: ScratchpadStore
     let log: DictationLogStore
     let stats: DictationStatsStore
@@ -84,6 +85,11 @@ struct MenuBarContent: View {
     /// by macOS or another app before it reaches our local monitor. Cancelled on
     /// capture/stop so it never fires for a completed or abandoned recording.
     @State private var chordTimeoutWork: DispatchWorkItem?
+
+    /// A pending app-tone switch awaiting confirmation: set when the user picks an
+    /// app via "Add app…" that's already mapped, so the alert can confirm before
+    /// overwriting the existing mapping's tone. nil = no alert showing.
+    @State private var pendingSwitch: PendingSwitch?
 
     /// The active chord, decoded from `shortcutStorage` (default on malformed).
     /// Shared by `shortcutSettingRow` and the Dictate hero so they can't drift.
@@ -190,6 +196,7 @@ struct MenuBarContent: View {
             }
         }
         .onChange(of: profiles.selectedID) { _, _ in profiles.saveSelection() }
+        .onChange(of: appTones.items) { _, _ in appTones.save() }
         // When a capture starts routing to the note, surface it: leave Settings
         // and snap to the Dictate tab so the box is visible. Keyed on
         // isCapturing (not isExpanded): isCapturing reliably goes false→true on
@@ -672,7 +679,7 @@ struct MenuBarContent: View {
                 hairline
                 toneOptionRow(name: "Default (clean up only)", id: nil)
                 ForEach(profiles.items) { profile in
-                    toneOptionRow(name: profile.name.isEmpty ? "Untitled" : profile.name, id: profile.id)
+                    toneOptionRow(name: profile.displayName, id: profile.id)
                 }
             }
 
@@ -806,7 +813,7 @@ struct MenuBarContent: View {
     private var activeToneName: String {
         if let id = profiles.selectedID,
            let profile = profiles.items.first(where: { $0.id == id }) {
-            return profile.name.isEmpty ? "Untitled" : profile.name
+            return profile.displayName
         }
         return "Default (clean up only)"
     }
@@ -933,7 +940,7 @@ struct MenuBarContent: View {
             reorderArrows(for: p.id)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(p.name.isEmpty ? "Untitled" : p.name)
+                    Text(p.displayName)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.92))
                         .lineLimit(1)
@@ -961,7 +968,7 @@ struct MenuBarContent: View {
         let p = profile.wrappedValue
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Text(p.name.isEmpty ? "Untitled" : p.name)
+                Text(p.displayName)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.92))
                     .lineLimit(1)
@@ -1109,6 +1116,8 @@ struct MenuBarContent: View {
             .groupedCardSurface()
 
             toneChordsSection
+
+            appToneSection
 
             Button { NSApplication.shared.terminate(nil) } label: {
                 Text("Quit WhisprSoft")
@@ -1651,7 +1660,7 @@ struct MenuBarContent: View {
                 Menu {
                     Button("None") { setSlotTone(index, nil) }
                     ForEach(profiles.items) { profile in
-                        Button(profile.name.isEmpty ? "Untitled" : profile.name) {
+                        Button(profile.displayName) {
                             setSlotTone(index, profile.id)
                         }
                     }
@@ -1728,7 +1737,7 @@ struct MenuBarContent: View {
     private func slotToneLabel(_ slot: ToneChordSlot) -> String {
         guard let id = slot.toneID else { return "Choose tone" }
         guard let profile = profiles.items.first(where: { $0.id == id }) else { return "Deleted tone" }
-        return profile.name.isEmpty ? "Untitled" : profile.name
+        return profile.displayName
     }
 
     private func setSlotTone(_ index: Int, _ id: UUID?) {
@@ -1741,6 +1750,211 @@ struct MenuBarContent: View {
         toneChords.slots[index] = .empty
         toneChords.save()
         coordinator.updateHotkey()
+    }
+
+    // MARK: - App tone mapping
+
+    /// A pending "this app is already mapped" confirmation. Identifiable so the
+    /// alert can present on it; carries enough to build the message and apply the
+    /// switch in place (by bundle id).
+    private struct PendingSwitch: Identifiable {
+        let id = UUID()
+        let bundleID: String
+        let appName: String
+        let newToneID: UUID
+        let newToneName: String
+        let oldToneName: String
+    }
+
+    /// App-context tone mapping for the default chord: pick which tone is used
+    /// when dictating into a given app. Tone-chord one-shots still override this.
+    private var appToneSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("App tones")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text("Automatically switch tone based on the app you're dictating into. Tone shortcuts still override this.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 2)
+
+            VStack(spacing: 0) {
+                ForEach(Array(appTones.items.enumerated()), id: \.element.id) { index, mapping in
+                    if index > 0 { hairline }
+                    appToneRow(mapping)
+                }
+                if !appTones.items.isEmpty { hairline }
+                addAppRow
+            }
+            .groupedCardSurface()
+        }
+        // Present the "already mapped" confirmation. Confirm switches the existing
+        // mapping's tone in place; Cancel discards. Either path leaves `items` as
+        // the source of truth, so the `.onChange(of: appTones.items)` hook persists.
+        .alert("Already mapped", isPresented: Binding(
+            get: { pendingSwitch != nil },
+            set: { if !$0 { pendingSwitch = nil } }
+        ), presenting: pendingSwitch) { pending in
+            Button("Switch") { confirmSwitch(pending) }
+            Button("Cancel", role: .cancel) { pendingSwitch = nil }
+        } message: { pending in
+            Text("\(pending.appName) is already mapped to \(pending.oldToneName). Switch it to \(pending.newToneName)?")
+        }
+    }
+
+    private func appToneRow(_ mapping: AppToneMapping) -> some View {
+        HStack(spacing: 8) {
+            Text(mapping.appName)
+                .font(.system(size: 12.5))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 6)
+
+            // Direct tone edit for this row (no confirmation — the user is editing
+            // this row explicitly). "Deleted tone" when the reference is dangling.
+            Menu {
+                ForEach(profiles.items) { profile in
+                    Button(profile.displayName) {
+                        setMappingTone(mapping, profile.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(appToneDisplayName(mapping.toneID))
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(appToneExists(mapping.toneID) ? .white.opacity(0.9) : .white.opacity(0.4))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 120, alignment: .trailing)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+
+            Button { removeMapping(mapping) } label: {
+                Image(systemName: "minus.circle.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.3))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    /// "Add app…" — a menu of eligible running apps, each a submenu of tone
+    /// profiles. Disabled (with a hint) until at least one profile exists.
+    @ViewBuilder
+    private var addAppRow: some View {
+        let hasProfiles = !profiles.items.isEmpty
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(eligibleApps, id: \.bundleID) { app in
+                    Menu(app.name) {
+                        ForEach(profiles.items) { profile in
+                            Button(profile.displayName) {
+                                assignMapping(bundleID: app.bundleID, appName: app.name, toneID: profile.id)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Add app…")
+                        .font(.system(size: 12.5, weight: .medium))
+                }
+                .foregroundStyle(hasProfiles ? Theme.accent : .white.opacity(0.3))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(!hasProfiles)
+
+            if !hasProfiles {
+                Text("Create a tone profile first")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.35))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    /// Running apps eligible to be mapped: regular (Dock-visible) apps with a
+    /// bundle id and name, excluding WhisprSoft itself. Deduped by bundle id and
+    /// sorted by name.
+    private var eligibleApps: [(bundleID: String, name: String)] {
+        var seen = Set<String>()
+        return NSWorkspace.shared.runningApplications
+            .filter {
+                $0.activationPolicy == .regular &&
+                $0.bundleIdentifier != nil &&
+                $0.localizedName != nil &&
+                $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
+            .compactMap { app -> (bundleID: String, name: String)? in
+                guard let bundleID = app.bundleIdentifier, let name = app.localizedName,
+                      seen.insert(bundleID).inserted else { return nil }
+                return (bundleID, name)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// True when `id` references a tone profile that still exists.
+    private func appToneExists(_ id: UUID) -> Bool {
+        profiles.items.contains { $0.id == id }
+    }
+
+    /// The display name for a mapped tone id: the profile name, or "Deleted tone"
+    /// when its tone was removed (reusing the tone-chord row's logic).
+    private func appToneDisplayName(_ id: UUID) -> String {
+        guard let profile = profiles.items.first(where: { $0.id == id }) else { return "Deleted tone" }
+        return profile.displayName
+    }
+
+    /// Map `bundleID` to `toneID`. If the app is already mapped, defer to a
+    /// confirmation (switch its tone) rather than silently overwriting; otherwise
+    /// append a new mapping. The `.onChange(of: appTones.items)` hook persists.
+    private func assignMapping(bundleID: String, appName: String, toneID: UUID) {
+        if let existing = appTones.items.first(where: { $0.bundleID == bundleID }) {
+            pendingSwitch = PendingSwitch(
+                bundleID: bundleID, appName: appName,
+                newToneID: toneID, newToneName: appToneDisplayName(toneID),
+                oldToneName: appToneDisplayName(existing.toneID))
+        } else {
+            appTones.items.append(AppToneMapping(bundleID: bundleID, appName: appName, toneID: toneID))
+        }
+    }
+
+    /// Apply a confirmed switch: update the existing mapping's tone in place (no
+    /// duplicate row). Keyed by bundle id so it survives a reorder during the alert.
+    private func confirmSwitch(_ pending: PendingSwitch) {
+        if let i = appTones.items.firstIndex(where: { $0.bundleID == pending.bundleID }) {
+            appTones.items[i].toneID = pending.newToneID
+        }
+        pendingSwitch = nil
+    }
+
+    /// Direct row edit: switch this mapping's tone with no confirmation.
+    private func setMappingTone(_ mapping: AppToneMapping, _ toneID: UUID) {
+        guard let i = appTones.items.firstIndex(where: { $0.id == mapping.id }) else { return }
+        appTones.items[i].toneID = toneID
+    }
+
+    private func removeMapping(_ mapping: AppToneMapping) {
+        appTones.items.removeAll { $0.id == mapping.id }
     }
 
     /// Begin capturing a ⌃⌥-only chord key for `index`. Like the default-shortcut

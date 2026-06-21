@@ -7,6 +7,7 @@
 //  Stages are held by protocol type and injected at init.
 //
 
+import AppKit
 import Foundation
 import Observation
 import os
@@ -125,18 +126,36 @@ final class Coordinator {
         // press while busy is ignored here, exactly like a default-chord press.
         guard state == .idle else { return }
 
-        // Resolve a one-shot tone override for a tone-chord press. A deleted tone
-        // makes the slot behave as unassigned: no-op (don't start), per the spec.
-        // A normal dictation (toneID == nil) keeps `.active` (persisted selection).
+        // Resolve the tone for this run and the name to show in the indicator.
+        // A tone-chord press is a one-shot override; the default chord follows the
+        // frontmost app (if mapped), else the persisted selection.
         var selection: ToneSelection = .active
         var toneName: String?
         if let toneID {
+            // Tone-chord press: a one-shot override that still wins over app
+            // context. A deleted tone makes the slot behave as unassigned: no-op
+            // (don't start), per the spec.
             guard let resolved = RewriteProfilesStore.resolveOverride(id: toneID) else {
                 Log.pipeline.notice("Tone chord pressed but its tone was deleted — ignoring")
                 return
             }
             selection = .override(resolved.profile)
             toneName = resolved.name
+        } else {
+            // Default chord: tone follows the frontmost app, if mapped. Otherwise
+            // the persisted selection (.active) with its display name for the
+            // indicator. (When the popover is open for note capture, the frontmost
+            // app is WhisprSoft itself, so no mapping matches and the default tone
+            // applies — intended, no special-casing.)
+            if let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+               let resolved = AppToneMapStore.resolve(bundleID: bundleID) {
+                Log.pipeline.notice("App tone mapping matched: \(resolved.name, privacy: .public)")
+                selection = .override(resolved.profile)
+                toneName = resolved.name
+            } else {
+                selection = .active
+                toneName = RewriteProfilesStore.activeDisplayName()
+            }
         }
 
         // Snapshot the routing decision: if the popover is open at begin, the

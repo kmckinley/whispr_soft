@@ -43,6 +43,7 @@ abstraction.
       Rewriter.swift        // RewriteMode + Rewriter + StubRewriter
       HTTPRewriter.swift    // RewriterConfig + real Anthropic Messages rewriter
       RewriteLadder.swift   // mode-aware (local/cloud) → raw ladder
+      AppToneMapStore.swift // per-app → tone mapping (default chord) + resolver
     Correction/
       KeywordCorrector.swift  // deterministic whole-word find-replace (final step)
       CorrectionsStore.swift  // user-editable corrections list + persistence
@@ -344,10 +345,14 @@ The Coordinator snapshots the selection in `beginDictation` (overwritten every
 run, so no stale leak) and reads it once in `endDictation`.
 
 **HUD.** `Coordinator.activeToneName` (cleared on leaving `.recording` and in
-`recoverFromError`) names the one-shot tone in the Dictate hero's recording
-subtitle **and** in the floating on-screen HUD (see "On-screen dictation HUD"
-below), so the tone is visible even when the popover is closed (the common
-inject-into-another-app case).
+`recoverFromError`) names the run's tone in the Dictate hero's recording subtitle
+**and** in the floating on-screen HUD (see "On-screen dictation HUD" below), so
+the tone is visible even when the popover is closed (the common
+inject-into-another-app case). It is now set on **every** run — a tone-chord
+run's one-shot tone, an app-mapped tone (see "App-context tone mapping"), or
+otherwise the persisted selection's display name (`RewriteProfilesStore.
+activeDisplayName()`, "Default" when nothing is selected) — not only tone-chord
+runs.
 
 **Settings UI.** A "Tone shortcuts" section in Settings (`toneChordsSection`) with
 three rows: each a tone `Menu` (+ "None") and a ⌃⌥-only key recorder
@@ -522,6 +527,42 @@ blank instruction — all meaning plain cleanup), the same read-fresh pattern
 The menu's `profilesSection` (a Default-or-profile `Picker` + editable
 name/instruction rows) is the UI; persistence is on-change, no Save button.
 
+**App-context tone mapping.** For the **default dictation chord only**, the tone
+can follow the **frontmost application** — e.g. Slack → "Client comms", Terminal
+→ "Technical". A ⌃⌥ tone chord still **overrides** app context (its one-shot tone
+wins); app mapping applies only to the default chord. `AppToneMapStore`
+(`Rewrite/AppToneMapStore.swift`, `@MainActor @Observable`, owned by
+`AppDelegate`) mirrors `RewriteProfilesStore`/`ToneChordStore`: `items`
+(`AppToneMapping` = `bundleID` + captured `appName` + `toneID` referencing **any**
+`RewriteProfile.id`) persisted as JSON in `UserDefaults["appToneMappings"]`. It
+ships **empty** (opt-in; no first-run seed) and allows **one mapping per app**.
+The Coordinator reads it **fresh per dictation** (never injected as a dependency,
+exactly like the tone chords) via the `nonisolated static
+AppToneMapStore.resolve(bundleID:)`, which **delegates to
+`RewriteProfilesStore.resolveOverride`** so a blank-instruction tone still yields
+a name with a nil profile (plain cleanup) and a **deleted** tone resolves to nil
+(treated as no mapping — the app falls back to the default tone, no crash). In
+`Coordinator.beginDictation(toneID:)` the tone-chord branch is unchanged; the
+default-chord (`toneID == nil`) branch resolves the frontmost app
+(`NSWorkspace.shared.frontmostApplication?.bundleIdentifier`) → a mapping →
+`.override(resolved.profile)` + `resolved.name`; with no mapping it uses `.active`
++ `RewriteProfilesStore.activeDisplayName()` (the persisted selection's display
+name, "Default" when none). When the popover is open for note capture the
+frontmost app is WhisprSoft itself, so no mapping matches and the default tone
+applies — intended, no special-casing. The Settings `appToneSection` (after
+`toneChordsSection`) is a growable list of rows (app name + inline tone `Menu` +
+⊖ remove; "Deleted tone" for a dangling reference) plus an "Add app…" `Menu`
+whose items are the eligible **running** apps (regular activation policy, has
+bundle id + name, excluding WhisprSoft; deduped, sorted), each a submenu of tone
+profiles; the Add control is disabled with a hint until at least one profile
+exists. Picking an **already-mapped** app routes through an "Already mapped"
+confirmation alert (`pendingSwitch`) that switches the existing mapping's tone in
+place (no duplicate); a row's own tone `Menu` is a direct edit (no confirm).
+Persistence is the `.onChange(of: appTones.items)` hook (no Save button).
+Privacy-safe by construction (bundle ids, app names, tone ids — never transcript
+content); the Coordinator logs only the matched tone **name**
+(`App tone mapping matched: <name>`), never content.
+
 **Target language.** The user can pick an output language for the cleaned
 text. Translation is **not** a new pipeline stage — like tone, it's applied
 inside `HTTPRewriter.systemPrompt(for:language:)`, so cloud and local both get
@@ -610,8 +651,9 @@ auto-dismisses on return to `.idle`.
   translucent capsule with a subtle `Theme.accent` border. It renders from
   `coordinator.state` (a pure observer; it never pushes to the Coordinator):
   `.recording` shows a scaled-down `WaveformBars` + "Listening" (plus the
-  accent-colored `coordinator.activeToneName` on a second line when a tone chord
-  drove the run — making the one-shot tone visible); transcribing/rewriting/
+  accent-colored `coordinator.activeToneName` on a second line — now set on
+  **every** run: the one-shot tone-chord tone, an app-mapped tone, or the default
+  selection's name / "Default"); transcribing/rewriting/
   injecting show a `Spinner` + "Cleaning up…"; `.error` shows a red warning glyph
   + the message (width-bounded so it tail-truncates to one line); `.idle` renders
   nothing.

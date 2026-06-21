@@ -19,6 +19,7 @@ struct WhisprSoftApp: App {
                            corrections: appDelegate.corrections,
                            profiles: appDelegate.profiles,
                            toneChords: appDelegate.toneChords,
+                           appTones: appDelegate.appTones,
                            scratchpad: appDelegate.scratchpad,
                            log: appDelegate.log,
                            stats: appDelegate.stats)
@@ -41,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let corrections = CorrectionsStore()
     let profiles = RewriteProfilesStore()
     let toneChords = ToneChordStore()
+    let appTones = AppToneMapStore()
 
     /// The floating on-screen dictation HUD. Owned here (like the hotkey) and a
     /// pure observer of the Coordinator's state. Lazy so it's built after the

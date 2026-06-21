@@ -18,6 +18,12 @@ struct RewriteProfile: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     var name: String
     var instruction: String
+
+    /// The name to show in menus/pickers, falling back to "Untitled" for a blank
+    /// name. Centralized so every display site stays consistent. `nonisolated` so
+    /// the nonisolated resolvers (e.g. `activeDisplayName()`) can read it under the
+    /// project's MainActor-default isolation.
+    nonisolated var displayName: String { name.isEmpty ? "Untitled" : name }
 }
 
 /// The editable tone-profiles list, the active selection, and their
@@ -142,6 +148,16 @@ final class RewriteProfilesStore {
         guard !instruction.isEmpty else { return nil }
 
         return ActiveRewriteProfile(name: profile.name, instruction: instruction)
+    }
+
+    /// The display name of the persisted tone selection, for the on-screen
+    /// indicator: the selected profile's name, or "Default" when nothing is
+    /// selected (or it was deleted). Distinct from `active()`: it returns a name
+    /// even for a blank-instruction tone (which `active()` reduces to nil/plain
+    /// cleanup), so the indicator can always show a tone even on a default run.
+    nonisolated static func activeDisplayName() -> String {
+        guard let id = loadSelectedID(), let profile = storedProfile(id: id) else { return "Default" }
+        return profile.displayName
     }
 
     /// Decode `storageKey` fresh and return the profile with `id`, or nil. Shared

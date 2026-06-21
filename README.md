@@ -47,6 +47,16 @@ audio never leaves the Mac.
   that one dictation uses the slot's tone and then everything reverts — your active
   tone is never touched. The recording indicator names the tone in use. If the
   bound tone is deleted, the slot quietly does nothing.
+- **App tones.** Map specific apps to tones so the normal shortcut picks the tone
+  automatically — e.g. Slack → "Client comms", Terminal → "Technical". When you
+  dictate with the default shortcut, the tone follows the frontmost app if it's
+  mapped; otherwise your selected tone applies. Set it up in **Settings** ▸ **App
+  tones**: pick a running app from **Add app…**, choose its tone, and you're done
+  (one mapping per app, referencing any of your tone profiles). Tone shortcuts
+  still override this — a held ⌃⌥ chord always wins over the app mapping. The
+  recording indicator now always names the tone in use, on every dictation. The
+  feature ships empty; if a mapped tone is later deleted, that app falls back to
+  your selected tone.
 - **Target language.** Pick an output language from a fixed list of ~20 major
   languages. When you choose a non-default language, the cleaned-up text is
   translated into it before it's pasted — so you can speak English and paste
@@ -71,10 +81,11 @@ audio never leaves the Mac.
   popover, but is cleared on quit and never written to disk). Dictating with the
   popover closed pastes into the frontmost app exactly as before.
 - **On-screen indicator.** An optional floating pill appears near the top of the
-  screen while you dictate, showing the live recording/processing state (and the
-  one-shot tone name when a tone shortcut is held) — handy when you're dictating
-  into another app with the popover closed. Toggle it with **Show on-screen
-  indicator** in Settings; it's on by default.
+  screen while you dictate, showing the live recording/processing state and the
+  tone in use — the one-shot tone of a held shortcut, an app-mapped tone, or your
+  selected tone — handy when you're dictating into another app with the popover
+  closed. Toggle it with **Show on-screen indicator** in Settings; it's on by
+  default.
 - **Activity graph.** Settings shows a bar chart of how much you've dictated over
   the last 90 days, with a **Day / Week / Month** view toggle. Only counts and
   dates are stored — never any transcript text — and the data persists across
@@ -154,8 +165,11 @@ and a **Tone shortcuts** section with three slots — each pairs a tone with a
 **⌃⌥ + key** chord (the recorder accepts only that combination) for a one-shot
 tone dictation, and can be cleared back to unassigned. A chord that collides with
 the dictation shortcut or another slot is rejected with an inline hint. Below that
-are Quit and the app version. Add whichever cloud provider's key you plan to use;
-switch between them from the Dictate tab's Engine row.
+is an **App tones** section — map an app to a tone so the normal shortcut switches
+tone automatically based on the frontmost app (use **Add app…** to pick a running
+app and its tone; tone shortcuts still override it). Below that are Quit and the
+app version. Add whichever cloud provider's key you plan to use; switch between
+them from the Dictate tab's Engine row.
 
 At the bottom of Settings is a **Show logs** toggle that reveals a per-dictation
 diagnostic log. Each entry reports which engine and model ran, whether cleanup
