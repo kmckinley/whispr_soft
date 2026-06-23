@@ -149,7 +149,7 @@ recognized correctly during transcription, not just fixed afterward.
 
 ### Settings
 
-<img src="https://raw.githubusercontent.com/kmckinley/whispr_soft/refs/heads/main/screenshots/settings.png" alt="The Settings screen" width="400">
+<img src="https://raw.githubusercontent.com/kmckinley/whispr_soft/refs/heads/main/screenshots/settings.png" alt="The Settings screen" width="820">
 
 Behind the gear: the **Local mode** toggle (route cleanup to a local LM Studio
 instance instead of the cloud), the **Claude API key** and **ChatGPT API key**
