@@ -9,7 +9,9 @@ abstraction.
 
 ## Constraints
 
-- Swift 5, Xcode 26.5, macOS 26.5 deployment target.
+- Swift 5, Xcode 26.5, macOS 14.0 deployment target (floor set by the
+  `@Observable`/`withObservationTracking`/`.onChange(of:initial:)` APIs in
+  use; WhisperKit itself supports macOS 13).
 - **App Sandbox is OFF; Hardened Runtime is ON.** The Accessibility APIs
   and synthetic event injection (the paste keystroke) are unsupported
   under the App Sandbox, and this app requires both — so it cannot be
@@ -728,26 +730,48 @@ the Settings screen:
   elsewhere. (Drag-reorder was tried and abandoned after three failed runtime
   iterations.) Rows render in the shared `measuredScroll` like the other tabs.
 - **Corrections** — `corrections.items` as inline-editable rows (+ add/delete).
-- **Settings** (gear) — custom Local-mode toggle (`localMode`), the real
-  Keychain key add/remove flow, an interactive **dictation-shortcut recorder**
-  (`shortcutSettingRow`: shows the active chord's keycaps + a "Change" affordance;
-  while recording it **disarms the global tap** (`coordinator.stopHotkey()`) so
-  the session-level tap — which sees keystrokes before the local monitor — can't
-  engage a phantom dictation on an overlapping chord, then a local `NSEvent`
-  monitor captures the next chord via `DictationShortcut(nsEvent:)` — bare Escape
-  cancels, a modifier-less press shows a hint and keeps recording; on save/cancel
-  it re-arms via `coordinator.startHotkey()` (which reloads the new binding).
-  "Reset to default" restores ⌃⌥Space and pushes it to the live tap via
-  `coordinator.updateHotkey()`. The binding persists in
-  `@AppStorage(DictationShortcut.storageKey)`), a **Cloud fallback** toggle
-  (`providerFallbackSettingRow`, `@AppStorage("cloudProviderFallback")`, between
-  the ChatGPT-key row and the shortcut recorder) **enabled only when both cloud
-  keys are present** (reuses `hasStoredKey`/`hasOpenAIKey`; disabled + dimmed with
-  a "add both keys" hint otherwise), Quit, and the bundle
-  `CFBundleShortVersionString`. A **Show logs** toggle (`@AppStorage("showLogs")`)
-  reveals the per-dictation diagnostic log (`logsSection`/`logEntryRow`), with a
-  red "raw fallback" tag and an amber "fallback" tag
-  (`entry.usedProviderFallback`, mutually exclusive with raw on success).
+- **Settings** (gear) — itself **four sub-tabs** across the top
+  (`SettingsTab`: **General / Shortcuts / App Tones / Activity**), rendered with
+  the **same segmented control** as the body tabs. That control was generalized
+  to a `segmentedControl(selection:label:)` helper generic over any
+  `Hashable & CaseIterable` selection — one copy now drives both the body
+  (Dictate/Tone/Corrections, `$tab`) and Settings (`$settingsTab`). Opening
+  Settings (the gear button) resets `settingsTab` to `.general`, so the gear
+  always lands on General. `settingsScroll` switches on `settingsTab` to render
+  the matching per-tab builder (`generalSettings`/`shortcutsSettings`/
+  `appTonesSettings`/`activitySettings`), keeping the shared `measuredScroll` +
+  `.onAppear { refreshKeyStatus() }`.
+  - **General** (`generalSettings`) — one grouped card containing, in order:
+    custom Local-mode toggle (`localModeSettingRow`, `localMode`), the real
+    Keychain Claude + ChatGPT key add/remove rows, a **Cloud fallback** toggle
+    (`providerFallbackSettingRow`, `@AppStorage("cloudProviderFallback")`)
+    **enabled only when both cloud keys are present** (reuses
+    `hasStoredKey`/`hasOpenAIKey`; disabled + dimmed with a "add both keys" hint
+    otherwise), the **Show on-screen indicator** toggle (`showHUDSettingRow`),
+    the **Show logs** toggle (`showLogsSettingRow`, `@AppStorage("showLogs")` —
+    just the toggle; the *list* lives on Activity), and the interactive
+    **dictation-shortcut recorder** (`shortcutSettingRow`: shows the active
+    chord's keycaps + a "Change" affordance; while recording it **disarms the
+    global tap** (`coordinator.stopHotkey()`) so the session-level tap — which
+    sees keystrokes before the local monitor — can't engage a phantom dictation
+    on an overlapping chord, then a local `NSEvent` monitor captures the next
+    chord via `DictationShortcut(nsEvent:)` — bare Escape cancels, a
+    modifier-less press shows a hint and keeps recording; on save/cancel it
+    re-arms via `coordinator.startHotkey()` (which reloads the new binding).
+    "Reset to default" restores ⌃⌥Space and pushes it to the live tap via
+    `coordinator.updateHotkey()`. The binding persists in
+    `@AppStorage(DictationShortcut.storageKey)`). Below the card: **Quit
+    WhisprSoft**, then the bundle `CFBundleShortVersionString`.
+  - **Shortcuts** (`shortcutsSettings`) — `toneChordsSection` (the one-shot tone
+    chords) only.
+  - **App Tones** (`appTonesSettings`) — `appToneSection` (per-app tone mapping)
+    only.
+  - **Activity** (`activitySettings`) — `statsSection` (the activity graph), then
+    the per-dictation diagnostic **logs list** (`logsList`/`logEntryRow`, with a
+    red "raw fallback" tag and an amber "fallback" tag — `entry.usedProviderFallback`,
+    mutually exclusive with raw on success) shown **only when `showLogs` is on**.
+    The Show-logs **toggle (General) and list (Activity) are split**, connected
+    solely by the `@AppStorage("showLogs")` state.
 
 The **dictation log** (`DictationLogStore`, `@MainActor @Observable`, owned by
 `AppDelegate`) **persists** to `UserDefaults["dictationLog"]` as JSON (mirroring

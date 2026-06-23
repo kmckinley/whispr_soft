@@ -33,9 +33,19 @@ struct MenuBarContent: View {
 
     enum Tab: String, CaseIterable { case dictate = "Dictate", tone = "Tone", corrections = "Corrections" }
 
+    /// The Settings sub-tabs, across the top of the Settings screen, styled with
+    /// the same segmented control as the body tabs.
+    enum SettingsTab: String, CaseIterable {
+        case general = "General", shortcuts = "Shortcuts",
+             appTones = "App Tones", activity = "Activity"
+    }
+
     /// Active body tab. Settings replaces the body entirely when shown.
     @State private var tab: Tab = .dictate
     @State private var showingSettings = false
+    /// Active Settings sub-tab. Reset to `.general` each time Settings opens, so
+    /// the gear always lands on General.
+    @State private var settingsTab: SettingsTab = .general
     /// Inline tone picker disclosure on the Dictate tab.
     @State private var showingTonePicker = false
     /// Inline target-language picker disclosure on the Dictate tab.
@@ -174,9 +184,12 @@ struct MenuBarContent: View {
             header
 
             if showingSettings {
+                segmentedControl(selection: $settingsTab) { $0.rawValue }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 6)
                 settingsScroll
             } else {
-                segmentedControl
+                segmentedControl(selection: $tab) { $0.rawValue }
                     .padding(.horizontal, 14)
                     .padding(.bottom, 6)
                 tabScroll
@@ -389,6 +402,7 @@ struct MenuBarContent: View {
                 }
                 Spacer()
                 HoverIconButton(system: "gearshape") {
+                    settingsTab = .general
                     withAnimation(.easeInOut(duration: 0.22)) { showingSettings = true }
                 }
             }
@@ -421,19 +435,27 @@ struct MenuBarContent: View {
 
     // MARK: - Segmented control
 
-    private var segmentedControl: some View {
+    /// A reusable segmented control over any `Hashable & CaseIterable` selection
+    /// (the body tabs and the Settings sub-tabs both drive it). Visuals unchanged
+    /// from the original `Tab`-only control: 12pt medium text, a
+    /// `Color.white.opacity(0.13)` selected fill with an accent glow, in a
+    /// 9pt-radius pill container.
+    private func segmentedControl<T: Hashable & CaseIterable>(
+        selection: Binding<T>,
+        label: @escaping (T) -> String
+    ) -> some View {
         HStack(spacing: 3) {
-            ForEach(Tab.allCases, id: \.self) { t in
-                Button { withAnimation(.easeInOut(duration: 0.15)) { tab = t } } label: {
-                    Text(t.rawValue)
+            ForEach(Array(T.allCases), id: \.self) { t in
+                Button { withAnimation(.easeInOut(duration: 0.15)) { selection.wrappedValue = t } } label: {
+                    Text(label(t))
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(tab == t ? .white : Color.white.opacity(0.5))
+                        .foregroundStyle(selection.wrappedValue == t ? .white : Color.white.opacity(0.5))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
                         .background(
                             RoundedRectangle(cornerRadius: 7)
-                                .fill(tab == t ? Color.white.opacity(0.13) : .clear)
-                                .shadow(color: tab == t ? Theme.accentGlow.opacity(0.5) : .clear, radius: 4)
+                                .fill(selection.wrappedValue == t ? Color.white.opacity(0.13) : .clear)
+                                .shadow(color: selection.wrappedValue == t ? Theme.accentGlow.opacity(0.5) : .clear, radius: 4)
                         )
                         .contentShape(Rectangle())
                 }
@@ -465,8 +487,18 @@ struct MenuBarContent: View {
     }
 
     private var settingsScroll: some View {
-        measuredScroll { settingsContent.padding(14) }
-            .onAppear { refreshKeyStatus() }
+        measuredScroll {
+            Group {
+                switch settingsTab {
+                case .general:   generalSettings
+                case .shortcuts: shortcutsSettings
+                case .appTones:  appTonesSettings
+                case .activity:  activitySettings
+                }
+            }
+            .padding(14)
+        }
+        .onAppear { refreshKeyStatus() }
     }
 
     @ViewBuilder
@@ -1092,7 +1124,9 @@ struct MenuBarContent: View {
 
     // MARK: - Settings
 
-    private var settingsContent: some View {
+    /// General sub-tab: the grouped settings card (engine/keys/fallback/HUD/logs
+    /// toggle/shortcut), then Quit, then the version string.
+    private var generalSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(spacing: 0) {
                 localModeSettingRow
@@ -1111,13 +1145,11 @@ struct MenuBarContent: View {
                 hairline
                 showHUDSettingRow
                 hairline
+                showLogsSettingRow
+                hairline
                 shortcutSettingRow
             }
             .groupedCardSurface()
-
-            toneChordsSection
-
-            appToneSection
 
             Button { NSApplication.shared.terminate(nil) } label: {
                 Text("Quit WhisprSoft")
@@ -1133,16 +1165,28 @@ struct MenuBarContent: View {
             }
             .buttonStyle(.plain)
 
-            statsSection
-
-            logsSection
-
             if let version = versionString {
                 Text("Version \(version)")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.white.opacity(0.3))
                     .frame(maxWidth: .infinity)
             }
+        }
+    }
+
+    /// Shortcuts sub-tab: the one-shot tone chords.
+    private var shortcutsSettings: some View { toneChordsSection }
+
+    /// App Tones sub-tab: per-app tone mapping.
+    private var appTonesSettings: some View { appToneSection }
+
+    /// Activity sub-tab: the activity graph, plus the per-dictation log list when
+    /// "Show logs" (General) is on. The toggle lives in General; only the list is
+    /// here — connected solely by the `@AppStorage("showLogs")` state.
+    private var activitySettings: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            statsSection
+            if showLogs { logsList }
         }
     }
 
@@ -1308,31 +1352,26 @@ struct MenuBarContent: View {
 
     // MARK: - Logs
 
-    /// The "Show logs" toggle and, when on, the per-dictation diagnostic list.
-    /// Logs are always collected in memory (see DictationLogStore); the toggle
-    /// only controls whether they're rendered here.
-    @ViewBuilder
-    private var logsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Show logs")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.9))
-                    Text("Per-dictation diagnostics. Saved on this Mac; clear anytime.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.45))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                LocalToggle(isOn: $showLogs)
+    /// The "Show logs" toggle — a card-style row in the General settings card
+    /// (modeled on `showHUDSettingRow`). Logs are always collected in memory (see
+    /// DictationLogStore); this only controls whether `logsList` is rendered on
+    /// the Activity tab.
+    private var showLogsSettingRow: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Show logs")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text("Per-dictation diagnostics. Saved on this Mac; clear anytime.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            Spacer()
+            LocalToggle(isOn: $showLogs)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 11)
-        .groupedCardSurface()
-
-        if showLogs { logsList }
     }
 
     private var logsList: some View {
