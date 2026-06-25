@@ -7,16 +7,24 @@ audio never leaves the Mac.
 
 ## What it does
 
-- **Hold-to-talk dictation.** Press and hold the shortcut (⌃⌥Space by default),
-  speak, and release. While you hold the chord the app records; on release it
-  transcribes and types the result into the frontmost app.
-- **Customizable shortcut.** Rebind the hold-to-talk chord in **Settings**: click
-  **Change** and press your new combination — at least one modifier (⌃ ⌥ ⌘ ⇧)
-  plus one regular key. It stays hold-to-talk; **Reset to default** restores
-  ⌃⌥Space. The new binding takes effect immediately and persists across launches.
+### Core dictation
+
+- **Hold-to-talk dictation.** Hold the shortcut, speak, release — the app records
+  while you hold the chord, then transcribes and types the result into the
+  frontmost app.
+- **Customizable shortcut.** Rebind the hold-to-talk chord in **Settings** — click
+  **Change** and press a new combination of at least one modifier (⌃ ⌥ ⌘ ⇧) plus
+  one regular key. It stays hold-to-talk; **Reset to default** restores ⌃⌥Space.
+  The new binding takes effect immediately and persists across launches.
 - **On-device transcription.** Speech is transcribed locally with
   [WhisperKit](https://github.com/argmaxinc/argmax-oss-swift). The Whisper model
   downloads automatically on first use (a few hundred MB), then runs offline.
+- **Menu-bar agent.** Runs as a menu-bar item with no dock icon and no main
+  window. All settings (API keys, Local Mode, tone profiles, corrections) live in
+  the menu.
+
+### Cleanup, tone & language
+
 - **Optional transcript cleanup.** The raw transcript can be lightly cleaned up
   (punctuation, grammar, filler removal) before it's pasted. Two modes:
   - **Cloud** — a hosted model via API. Choose the provider inline on the
@@ -32,8 +40,8 @@ audio never leaves the Mac.
     `127.0.0.1:1234`. No key, nothing leaves the Mac. Unchanged by the cloud
     provider choice — Local Mode is always on-device.
   - With no key and Local Mode off, the raw transcript is pasted as-is.
-- **Tone profiles.** Pick a tone for the cleaned-up text from a user-editable
-  list of profiles (full create/edit/delete/reorder). Each profile is a short
+- **Tone profiles.** Pick a tone for the cleaned-up text from a user-editable list
+  of profiles (full create/edit/delete/reorder). Each profile is a short
   instruction — e.g. "Professional" or "Casual" — that nudges the wording while
   the cleanup keeps your own sentences, structure, and meaning. Selecting
   **Default** leaves the cleanup unchanged. The active profile applies to both
@@ -51,30 +59,36 @@ audio never leaves the Mac.
   automatically — e.g. Slack → "Client comms", Terminal → "Technical". When you
   dictate with the default shortcut, the tone follows the frontmost app if it's
   mapped; otherwise your selected tone applies. Set it up in **Settings** ▸ **App
-  tones**: pick a running app from **Add app…**, choose its tone, and you're done
+  Tones**: pick a running app from **Add app…**, choose its tone, and you're done
   (one mapping per app, referencing any of your tone profiles). Tone shortcuts
   still override this — a held ⌃⌥ chord always wins over the app mapping. The
-  recording indicator now always names the tone in use, on every dictation. The
+  recording indicator always names the tone in use, on every dictation. The
   feature ships empty; if a mapped tone is later deleted, that app falls back to
   your selected tone.
 - **Target language.** Pick an output language from a fixed list of ~20 major
-  languages. When you choose a non-default language, the cleaned-up text is
-  translated into it before it's pasted — so you can speak English and paste
-  Spanish, French, Japanese, and so on. The default, **English (United States)**,
-  means no translation (the text stays in the language you spoke). Translation
-  rides on the same cleanup step, so it works in both Cloud and Local modes, and
-  the choice takes effect on the next dictation. Pick the language on the
-  **Dictate** tab. (Transcription itself is still English-tuned, so the reliable
-  path is *speak English → paste another language*.)
+  languages, and the cleaned-up text is translated into it before it's pasted — so
+  you can speak English and paste Spanish, French, Japanese, and so on. The
+  default, **English (United States)**, means no translation (the text stays in
+  the language you spoke). Translation rides on the same cleanup step, so it works
+  in both Cloud and Local modes, and the choice takes effect on the next
+  dictation. Pick the language on the **Dictate** tab. (Transcription itself is
+  still English-tuned, so the reliable path is *speak English → paste another
+  language*.)
+
+### Accuracy
+
 - **Keyword corrections.** A deterministic, user-editable find-and-replace list
   (e.g. fix a name Whisper consistently mishears) is applied *after* cleanup, so
   neither Whisper nor the cleanup model can reintroduce the wrong spelling. The
   same replacement terms double as a **transcription bias** — they're fed to
   Whisper as decoding hints, so your curated vocabulary (proper names, jargon) is
   more likely to be heard correctly in the first place.
-- **Quick-note scratchpad.** If you dictate while the menu-bar popover is open —
-  when there's no text field to paste into — the cleaned-up result is appended to
-  a note box that animates open on the Dictate tab instead of being pasted. Each
+
+### Capture & feedback
+
+- **Quick-note scratchpad.** Dictate while the menu-bar popover is open — when
+  there's no text field to paste into — and the cleaned-up result is appended to a
+  note box that animates open on the Dictate tab instead of being pasted. Each
   burst adds a new line; the full pipeline (cleanup, tone, language, corrections)
   still runs. The note is hand-editable, has **Copy** and **Clear** actions, and
   is kept in memory for the session (it survives closing and reopening the
@@ -90,9 +104,6 @@ audio never leaves the Mac.
   the last 90 days, with a **Day / Week / Month** view toggle. Only counts and
   dates are stored — never any transcript text — and the data persists across
   launches.
-- **Menu-bar agent.** Runs as a menu-bar item with no dock icon and no main
-  window. Settings (API key, Local Mode, tone profiles, corrections) live in the
-  menu.
 
 ## Screenshots
 
@@ -151,41 +162,46 @@ recognized correctly during transcription, not just fixed afterward.
 
 <img src="https://raw.githubusercontent.com/kmckinley/whispr_soft/refs/heads/main/screenshots/settings.png" alt="The Settings screen" width="820">
 
-Behind the gear: the **Local mode** toggle (route cleanup to a local LM Studio
-instance instead of the cloud), the **Claude API key** and **ChatGPT API key**
-add/remove flows (each stored in the Keychain, shown here as Connected), the
-**Cloud fallback** toggle (if your active cloud provider fails, automatically
-try the other one before the raw transcript — only enabled once *both* the Claude
-and ChatGPT keys are set; if you later remove a key it disables again), the
-**Show on-screen indicator** toggle (the floating dictation pill near the top of
-the screen — on by default), the
-**Dictation shortcut** recorder (click **Change** to rebind the hold-to-talk
-chord — at least one modifier plus a key — or **Reset to default** for ⌃⌥Space),
-and a **Tone shortcuts** section with three slots — each pairs a tone with a
-**⌃⌥ + key** chord (the recorder accepts only that combination) for a one-shot
-tone dictation, and can be cleared back to unassigned. A chord that collides with
-the dictation shortcut or another slot is rejected with an inline hint. Below that
-is an **App tones** section — map an app to a tone so the normal shortcut switches
-tone automatically based on the frontmost app (use **Add app…** to pick a running
-app and its tone; tone shortcuts still override it). Below that are Quit and the
-app version. Add whichever cloud provider's key you plan to use; switch between
-them from the Dictate tab's Engine row.
+Behind the gear, Settings is organized into four sub-tabs across the top —
+**General**, **Shortcuts**, **App Tones**, and **Activity** (the same segmented
+control as the body tabs). Opening the gear always lands on **General**.
 
-At the bottom of Settings is a **Show logs** toggle that reveals a per-dictation
-diagnostic log. Each entry reports which engine and model ran, whether cleanup
-fell back to the raw transcript (a red *raw fallback* tag) or switched to the
-other cloud provider (an amber *fallback* tag), the per-stage timings
-(speech-to-text, cleanup, and total processing), the input→output character
-counts, where the text went (pasted or sent to the note), and the outcome
-(OK / no audio / error). Logs are **saved between sessions** (stored on this Mac
-and restored at launch) and can be cleared at any time; the toggle only controls
-whether they're shown. Entries never contain the transcript text itself — only
-counts, timings, and engine metadata.
+**General** holds the main configuration card: the **Local mode** toggle (route
+cleanup to a local LM Studio instance instead of the cloud), the **Claude API
+key** and **ChatGPT API key** add/remove flows (each stored in the Keychain,
+shown here as Connected), the **Cloud fallback** toggle (if your active cloud
+provider fails, automatically try the other one before the raw transcript — only
+enabled once *both* the Claude and ChatGPT keys are set; if you later remove a key
+it disables again), the **Show on-screen indicator** toggle (the floating
+dictation pill near the top of the screen — on by default), the **Show logs**
+toggle (whose log list lives on the Activity sub-tab), and the **Dictation
+shortcut** recorder (click **Change** to rebind the hold-to-talk chord — at least
+one modifier plus a key — or **Reset to default** for ⌃⌥Space). Below the card are
+**Quit** and the app version. Add whichever cloud provider's key you plan to use;
+switch between them from the Dictate tab's Engine row.
 
-Settings also includes an **Activity** graph — a bar chart of delivered
+**Shortcuts** holds the **Tone shortcuts** section: three slots, each pairing a
+tone with a **⌃⌥ + key** chord (the recorder accepts only that combination) for a
+one-shot tone dictation, and clearable back to unassigned. A chord that collides
+with the dictation shortcut or another slot is rejected with an inline hint.
+
+**App Tones** holds the **App tones** section — map an app to a tone so the normal
+shortcut switches tone automatically based on the frontmost app (use **Add app…**
+to pick a running app and its tone; tone shortcuts still override it).
+
+**Activity** holds the activity graph plus — when **Show logs** (on General) is on
+— a per-dictation diagnostic log. The graph is a bar chart of delivered
 dictations over the last 90 days with a **Day / Week / Month** view toggle and a
-running total. Like the logs, it stores only counts and dates (never any
-transcript text), and both the data and the chosen view persist across launches.
+running total; it stores only counts and dates (never any transcript text), and
+both the data and the chosen view persist across launches. Each log entry reports
+which engine and model ran, whether cleanup fell back to the raw transcript (a red
+*raw fallback* tag) or switched to the other cloud provider (an amber *fallback*
+tag), the per-stage timings (speech-to-text, cleanup, and total processing), the
+input→output character counts, where the text went (pasted or sent to the note),
+and the outcome (OK / no audio / error). Logs are **saved between sessions**
+(stored on this Mac and restored at launch) and can be cleared at any time; the
+toggle only controls whether they're shown. Entries never contain the transcript
+text itself — only counts, timings, and engine metadata.
 
 ## Privacy
 
@@ -209,7 +225,7 @@ transcript text), and both the data and the chosen view persist across launches.
 
 ## Requirements
 
-- macOS **26.5** or later.
+- macOS **14** or later.
 - **Xcode 26.5** to build.
 
 ## Build & run
@@ -225,12 +241,17 @@ transcript text), and both the data and the chosen view persist across launches.
 
 ### Permissions
 
-WhisprSoft can't run until both are granted; it shows an onboarding
-checklist until they are.
+WhisprSoft can't run until both are granted. While either is missing, the
+popover shows only a **permissions gate** (a card for each permission, with its
+status and a Grant action) — the normal tabs and controls are hidden, so a
+dictation is unreachable. The gate re-evaluates automatically every time you
+open the popover: granting un-gates it, revoking re-gates it.
 
 - **Microphone** — to record your voice. Granted inline via the standard prompt.
 - **Accessibility** — to paste the transcribed text into the focused app
-  (synthetic ⌘V). Granted in System Settings, then re-checked.
+  (synthetic ⌘V). A single **Grant** button triggers the system trust prompt
+  (which itself offers to open System Settings); the gate re-checks the next
+  time you open the popover.
 
 ### Optional: transcript cleanup
 
