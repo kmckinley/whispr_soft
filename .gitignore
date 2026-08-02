@@ -1,5 +1,13 @@
 # macOS
 .DS_Store
+._*
+
+# Editors / IDEs
+.idea/
+*.iml
+.vscode/
+*.swp
+*~
 
 # Xcode
 xcuserdata/
@@ -18,3 +26,17 @@ DerivedData/
 
 # SwiftPM local caches (the SHARED Package.resolved stays tracked)
 .swiftpm/
+
+# Distribution artifacts (Developer ID + notarization path)
+*.xcarchive
+*.ipa
+*.pkg
+
+# Signing material and secrets — NEVER commit these
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
+AuthKey_*.p8
+.env
+.env.*
