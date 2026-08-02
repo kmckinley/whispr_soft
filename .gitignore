@@ -40,3 +40,6 @@ DerivedData/
 AuthKey_*.p8
 .env
 .env.*
+
+# Local notes
+RELEASING.md
