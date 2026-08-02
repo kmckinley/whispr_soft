@@ -97,8 +97,11 @@ final class WhisperKitTranscriber: Transcriber {
             decodeOptions: biasOptions(for: kit))
         let text = results.map(\.text).joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        Log.transcription.notice("WhisperKit: transcribed \(text.count, privacy: .public) chars")
-        return text
+        // Drop known subtitle-credit hallucinations before the rewrite sees them
+        // (the rewrite is told never to remove content, so it would pass them on).
+        let filtered = TranscriptFilter.strip(text)
+        Log.transcription.notice("WhisperKit: transcribed \(filtered.count, privacy: .public) chars")
+        return filtered
     }
 
     /// Builds decode options that bias recognition toward the user's curated

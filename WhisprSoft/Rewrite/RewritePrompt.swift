@@ -134,6 +134,8 @@ nonisolated enum RewritePrompt {
           quotation marks, or commentary. There is no one to address.
         - NEVER add, summarize, shorten, or expand beyond cleaning the speech.
         - NEVER include <transcript> tags in your output.
+        - NEVER use em dashes or en dashes (— or –). Use commas, or split into
+          separate sentences, instead.
 
         Output ONLY the cleaned text. If you are unsure how to clean a passage,
         return it with only punctuation and capitalization corrected. When in

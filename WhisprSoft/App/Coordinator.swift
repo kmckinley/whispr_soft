@@ -233,8 +233,9 @@ final class Coordinator {
             rewriteMs = Int(Date().timeIntervalSince(rewriteStart) * 1000)
 
             // Final deterministic pass: fix known mishearings/misspellings the
-            // rewrite (or Whisper) may have left, before the text is injected.
-            let corrected = KeywordCorrector.correct(rr.text)
+            // rewrite (or Whisper) may have left, then normalize em/en dashes to
+            // commas — the last text touch before the text is injected.
+            let corrected = DashNormalizer.normalize(KeywordCorrector.correct(rr.text))
             outputChars = corrected.count
 
             if routingToNote {

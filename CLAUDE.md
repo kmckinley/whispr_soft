@@ -41,6 +41,7 @@ abstraction.
     Transcription/
       Transcriber.swift     // Transcriber (+ prepare() default) + StubTranscriber
       WhisperKitTranscriber.swift  // real WhisperKit transcriber (small.en)
+      TranscriptFilter.swift  // strips known Whisper hallucinations from the raw transcript
     Rewrite/
       Rewriter.swift        // RewriteMode + Rewriter + StubRewriter
       HTTPRewriter.swift    // RewriterConfig + real Anthropic Messages rewriter
@@ -48,6 +49,7 @@ abstraction.
       AppToneMapStore.swift // per-app → tone mapping (default chord) + resolver
     Correction/
       KeywordCorrector.swift  // deterministic whole-word find-replace (final step)
+      DashNormalizer.swift    // em/spaced-en dash → comma (last text touch)
       CorrectionsStore.swift  // user-editable corrections list + persistence
     Injection/
       TextInjector.swift    // TextInjector + StubInjector + PasteboardInjector
@@ -247,6 +249,22 @@ also clamps internally), and passes
 `DecodingOptions(usePrefillPrompt: true, promptTokens:)` via `decodeOptions:`.
 Logs only a count (`WhisperKit: biased with N vocab term(s)`) — never the terms.
 
+**Hallucination strip.** `transcribe(_:)` passes the joined transcript through
+`TranscriptFilter.strip` (`Transcription/TranscriptFilter.swift`, a pure
+`nonisolated enum`, same pattern as `KeywordCorrector`) before returning, so the
+rewrite never sees the phantom. `small.en` was trained on scraped subtitle files
+and on silence/near-silence can emit a subtitle credit for the non-existent site
+`zeoranger.co.uk`; the rewrite stage is instructed never to remove content, so it
+would pass straight through to injection. The filter is deliberately **narrow** —
+one regex per hallucination family in `hallucinationPatterns`, anchored on tokens
+a person would never dictate (`zeoranger`), with the optional "subs/subtitles
+by …" lead-in consumed **only** when the anchor follows (so "Subtitles by the
+team" is untouched). It collapses the whitespace the removal leaves and trims;
+an all-phantom take collapses to `""`, which the rewrite ladder and
+`PasteboardInjector` both treat as a no-op, so nothing is injected. New phantoms
+are added as new array entries — the strip logic doesn't change. Logs only a
+count, never the text.
+
 The model is **loaded once**: a cached `Task<Void, Error>` (`loadTask`)
 dedupes concurrent loads — the launch preload and a first dictation share
 one download rather than racing two. The loaded `WhisperKit` lands in a
@@ -383,7 +401,7 @@ the tap match unambiguous and simple.
 - `endDictation()` — **async**, dispatched from chord-up; guards
   `state == .recording` then claims `.transcribing` **synchronously before
   the first await**, then `stop()` → transcribe → rewrite → **correct** →
-  inject, ending at `.idle` (or `.error` briefly on failure via
+  **dash-normalize** → inject, ending at `.idle` (or `.error` briefly on failure via
   `recoverFromError`). A
   **zero-sample** capture (the device-IO-failed signature) is surfaced as
   `.error` (`PipelineError.noAudioCaptured`) right after `stop()` rather than
@@ -440,6 +458,17 @@ break matching. Logs only a count (`KeywordCorrector: applied N correction(s)`)
 terms double as a **transcription-time decoding bias** via
 `CorrectionsStore.biasTerms()` (deduplicated, read fresh per dictation) — see
 the Transcription stage's "Vocabulary biasing".
+
+`DashNormalizer` (`Correction/DashNormalizer.swift`, another pure `nonisolated
+enum`) runs **after** `KeywordCorrector` as the **last** text touch before
+injection, so it catches dashes from any backend (Claude, ChatGPT, LM Studio, or
+raw passthrough): em dashes — with any surrounding spaces — become `", "`, as do
+en dashes used as a **spaced** separator; a tight numeric range like `3–5` is
+left alone. A string with no dash returns immediately, and the stranded-comma
+tidy-up only runs when a substitution actually happened, so a legitimate trailing
+comma is never eaten. `RewritePrompt.cleanupPrompt` also asks the model not to
+emit dashes (one bullet in the `Never:` list, shared by all three backends), but
+that's a secondary measure — this pass is the guarantee.
 
 ### Injection stage
 

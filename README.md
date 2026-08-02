@@ -84,6 +84,15 @@ audio never leaves the Mac.
   Whisper as decoding hints, so your curated vocabulary (proper names, jargon) is
   more likely to be heard correctly in the first place.
 
+- **Hallucination strip.** Whisper's `small.en` model was trained on scraped
+  subtitle files, so on silence it sometimes emits a phantom subtitle credit for
+  a site that doesn't exist. That's removed from the raw transcript before
+  cleanup ever sees it; a take that was nothing but the phantom pastes nothing.
+
+- **No em dashes.** Em dashes (and spaced en dashes) become commas in a
+  deterministic final pass, whichever model did the cleanup. Numeric ranges like
+  `3–5` are left alone.
+
 ### Capture & feedback
 
 - **Quick-note scratchpad.** Dictate while the menu-bar popover is open — when
